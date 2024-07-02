@@ -19,6 +19,7 @@ import type {
   Feedback,
   OnSend,
 } from '../types'
+import type { ThemeBuilder } from '../embedded-chatbot/theme/theme-context'
 import Question from './question'
 import Answer from './answer'
 import ChatInput from './chat-input'
@@ -30,8 +31,10 @@ import { StopCircle } from '@/app/components/base/icons/src/vender/solid/mediaAn
 import AgentLogModal from '@/app/components/base/agent-log-modal'
 import PromptLogModal from '@/app/components/base/prompt-log-modal'
 import { useStore as useAppStore } from '@/app/components/app/store'
+import type { AppData } from '@/models/share'
 
 export type ChatProps = {
+  appData?: AppData
   chatList: ChatItem[]
   config?: ChatConfig
   isResponding?: boolean
@@ -54,8 +57,13 @@ export type ChatProps = {
   chatNode?: ReactNode
   onFeedback?: (messageId: string, feedback: Feedback) => void
   chatAnswerContainerInner?: string
+  hideProcessDetail?: boolean
+  hideLogModal?: boolean
+  themeBuilder?: ThemeBuilder
 }
+
 const Chat: FC<ChatProps> = ({
+  appData,
   config,
   onSend,
   chatList,
@@ -78,6 +86,9 @@ const Chat: FC<ChatProps> = ({
   chatNode,
   onFeedback,
   chatAnswerContainerInner,
+  hideProcessDetail,
+  hideLogModal,
+  themeBuilder,
 }) => {
   const { t } = useTranslation()
   const { currentLogItem, setCurrentLogItem, showPromptLogModal, setShowPromptLogModal, showAgentLogModal, setShowAgentLogModal } = useAppStore(useShallow(state => ({
@@ -194,6 +205,7 @@ const Chat: FC<ChatProps> = ({
                   const isLast = item.id === chatList[chatList.length - 1]?.id
                   return (
                     <Answer
+                      appData={appData}
                       key={item.id}
                       item={item}
                       question={chatList[index - 1]?.content}
@@ -204,6 +216,7 @@ const Chat: FC<ChatProps> = ({
                       allToolIcons={allToolIcons}
                       showPromptLog={showPromptLog}
                       chatAnswerContainerInner={chatAnswerContainerInner}
+                      hideProcessDetail={hideProcessDetail}
                     />
                   )
                 }
@@ -212,6 +225,7 @@ const Chat: FC<ChatProps> = ({
                     key={item.id}
                     item={item}
                     questionIcon={questionIcon}
+                    theme={themeBuilder?.theme}
                   />
                 )
               })
@@ -232,7 +246,7 @@ const Chat: FC<ChatProps> = ({
             {
               !noStopResponding && isResponding && (
                 <div className='flex justify-center mb-2'>
-                  <Button className='py-0 px-3 h-7 bg-white shadow-xs' onClick={onStopResponding}>
+                  <Button onClick={onStopResponding}>
                     <StopCircle className='mr-[5px] w-3.5 h-3.5 text-gray-500' />
                     <span className='text-xs text-gray-500 font-normal'>{t('appDebug.operation.stopResponding')}</span>
                   </Button>
@@ -253,12 +267,13 @@ const Chat: FC<ChatProps> = ({
                   visionConfig={config?.file_upload?.image}
                   speechToTextConfig={config?.speech_to_text}
                   onSend={onSend}
+                  theme={themeBuilder?.theme}
                 />
               )
             }
           </div>
         </div>
-        {showPromptLogModal && (
+        {showPromptLogModal && !hideLogModal && (
           <PromptLogModal
             width={width}
             currentLogItem={currentLogItem}
@@ -268,7 +283,7 @@ const Chat: FC<ChatProps> = ({
             }}
           />
         )}
-        {showAgentLogModal && (
+        {showAgentLogModal && !hideLogModal && (
           <AgentLogModal
             width={width}
             currentLogItem={currentLogItem}

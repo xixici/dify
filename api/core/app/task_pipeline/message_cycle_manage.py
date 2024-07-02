@@ -118,7 +118,8 @@ class MessageCycleManage:
         :param event: event
         :return:
         """
-        self._task_state.metadata['retriever_resources'] = event.retriever_resources
+        if self._application_generate_entity.app_config.additional_features.show_retrieve_source:
+            self._task_state.metadata['retriever_resources'] = event.retriever_resources
 
     def _get_response_metadata(self) -> dict:
         """
@@ -166,8 +167,11 @@ class MessageCycleManage:
                     extension = '.bin'
             else:
                 extension = '.bin'
-            # add sign url
-            url = ToolFileManager.sign_file(tool_file_id=tool_file_id, extension=extension)
+            # add sign url to local file
+            if message_file.url.startswith('http'):
+                url = message_file.url
+            else:
+                url = ToolFileManager.sign_file(tool_file_id=tool_file_id, extension=extension)
 
             return MessageFileStreamResponse(
                 task_id=self._application_generate_entity.task_id,
