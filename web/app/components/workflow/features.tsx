@@ -1,65 +1,95 @@
-import {
-  memo,
-  useCallback,
-} from 'react'
-import { useTranslation } from 'react-i18next'
+import type { WorkflowFeaturesConfigPayload } from '@dify/contracts/api/console/apps/types.gen'
+import type { StartNodeType } from './nodes/start/types'
+import type { CommonNodeType, InputVar, Node } from './types'
+import type { PromptVariable } from '@/models/debug'
+import { useAtomValue } from 'jotai'
+import { memo, useCallback } from 'react'
+import { useNodes } from 'reactflow'
+import { useFeaturesStore } from '@/app/components/base/features/hooks'
+import NewFeaturePanel from '@/app/components/base/features/new-feature-panel'
+import { webSocketClient } from '@/app/components/workflow/collaboration/core/websocket-manager'
+import { editorAppIdAtom, isChatflowAtom } from '@/app/components/workflow/editor-resource/state'
+import { updateFeatures } from '@/service/workflow'
+import { useNodesReadOnly } from './hooks/use-workflow'
+import useConfig from './nodes/start/use-config'
 import { useStore } from './store'
-import {
-  useIsChatMode,
-  useNodesReadOnly,
-  useNodesSyncDraft,
-} from './hooks'
-import { XClose } from '@/app/components/base/icons/src/vender/line/general'
-import {
-  FeaturesChoose,
-  FeaturesPanel,
-} from '@/app/components/base/features'
+import { InputVarType } from './types'
 
 const Features = () => {
-  const { t } = useTranslation()
-  const isChatMode = useIsChatMode()
-  const setShowFeaturesPanel = useStore(s => s.setShowFeaturesPanel)
+  const setShowFeaturesPanel = useStore((s) => s.setShowFeaturesPanel)
+  const appId = useAtomValue(editorAppIdAtom)
+  const isChatflow = useAtomValue(isChatflowAtom)
   const { nodesReadOnly } = useNodesReadOnly()
-  const { handleSyncWorkflowDraft } = useNodesSyncDraft()
+  const featuresStore = useFeaturesStore()
+  const nodes = useNodes<CommonNodeType>()
+  const startNode = nodes.find((node) => node.data.type === 'start')
+  const { id, data } = startNode as Node<StartNodeType>
+  const { handleAddVariable } = useConfig(id, data)
 
-  const handleFeaturesChange = useCallback(() => {
-    handleSyncWorkflowDraft()
-  }, [handleSyncWorkflowDraft])
+  const handleAddOpeningStatementVariable = (variables: PromptVariable[]) => {
+    const newVariable = variables[0]
+    const startNodeVariable: InputVar = {
+      variable: newVariable!.key,
+      label: newVariable!.name,
+      type: InputVarType.textInput,
+      max_length: newVariable!.max_length,
+      required: newVariable!.required || false,
+      options: [],
+    }
+    handleAddVariable(startNodeVariable)
+  }
+
+  const handleFeaturesChange = useCallback(async () => {
+    if (!appId || !featuresStore) return
+
+    try {
+      const currentFeatures = featuresStore.getState().features
+
+      // Transform features to match the expected server format (same as doSyncWorkflowDraft)
+      const transformedFeatures: WorkflowFeaturesConfigPayload = {
+        opening_statement: currentFeatures.opening?.enabled
+          ? currentFeatures.opening?.opening_statement || ''
+          : '',
+        suggested_questions: currentFeatures.opening?.enabled
+          ? currentFeatures.opening?.suggested_questions || []
+          : [],
+        suggested_questions_after_answer: currentFeatures.suggested,
+        text_to_speech: currentFeatures.text2speech,
+        speech_to_text: currentFeatures.speech2text,
+        retriever_resource: currentFeatures.citation,
+        sensitive_word_avoidance: currentFeatures.moderation,
+        file_upload: currentFeatures.file,
+      }
+
+      await updateFeatures({
+        appId,
+        features: transformedFeatures,
+      })
+
+      // Emit update event to other connected clients
+      const socket = webSocketClient.getSocket(appId)
+      if (socket) {
+        socket.emit('collaboration_event', {
+          type: 'vars_and_features_update',
+        })
+      }
+    } catch (error) {
+      console.error('Failed to update features:', error)
+    }
+
+    setShowFeaturesPanel(true)
+  }, [appId, featuresStore, setShowFeaturesPanel])
 
   return (
-    <div className='fixed top-16 left-2 bottom-2 w-[600px] rounded-2xl border-[0.5px] border-gray-200 bg-white shadow-xl z-10'>
-      <div className='flex items-center justify-between px-4 pt-3'>
-        {t('workflow.common.features')}
-        <div className='flex items-center'>
-          {
-            isChatMode && (
-              <>
-                <FeaturesChoose
-                  disabled={nodesReadOnly}
-                  onChange={handleFeaturesChange}
-                />
-                <div className='mx-3 w-[1px] h-[14px] bg-gray-200'></div>
-              </>
-            )
-          }
-          <div
-            className='flex items-center justify-center w-6 h-6 cursor-pointer'
-            onClick={() => setShowFeaturesPanel(false)}
-          >
-            <XClose className='w-4 h-4 text-gray-500' />
-          </div>
-        </div>
-      </div>
-      <div className='p-4'>
-        <FeaturesPanel
-          disabled={nodesReadOnly}
-          onChange={handleFeaturesChange}
-          openingStatementProps={{
-            onAutoAddPromptVariable: () => {},
-          }}
-        />
-      </div>
-    </div>
+    <NewFeaturePanel
+      show
+      isChatMode={isChatflow}
+      disabled={nodesReadOnly}
+      onChange={handleFeaturesChange}
+      onClose={() => setShowFeaturesPanel(false)}
+      onAutoAddPromptVariable={handleAddOpeningStatementVariable}
+      workflowVariables={data.variables}
+    />
   )
 }
 

@@ -1,28 +1,40 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
 type IAppUnavailableProps = {
-  code?: number
-  isUnknwonReason?: boolean
+  code?: number | string
+  isUnknownReason?: boolean
   unknownReason?: string
+  className?: string
 }
 
 const AppUnavailable: FC<IAppUnavailableProps> = ({
   code = 404,
-  isUnknwonReason,
+  isUnknownReason,
   unknownReason,
+  className,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['share'])
 
   return (
-    <div className='flex items-center justify-center w-screen h-screen'>
-      <h1 className='mr-5 h-[50px] leading-[50px] pr-5 text-[24px] font-medium'
+    <div className={cn('flex h-screen w-screen items-center justify-center', className)}>
+      <h1
+        className="mr-5 h-12.5 shrink-0 pr-5 text-[24px] leading-12.5 font-medium"
         style={{
           borderRight: '1px solid rgba(0,0,0,.3)',
-        }}>{code}</h1>
-      <div className='text-sm'>{unknownReason || (isUnknwonReason ? t('share.common.appUnkonwError') : t('share.common.appUnavailable'))}</div>
+        }}
+      >
+        {code}
+      </h1>
+      <div className="text-sm">
+        {unknownReason ||
+          (isUnknownReason
+            ? t(($) => $['common.appUnknownError'], { ns: 'share' })
+            : t(($) => $['common.appUnavailable'], { ns: 'share' }))}
+      </div>
     </div>
   )
 }

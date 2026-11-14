@@ -1,4 +1,6 @@
-from typing import Optional
+from typing import Any, cast
+
+from sqlalchemy.orm import Session
 
 from core.app.app_config.base_app_config_manager import BaseAppConfigManager
 from core.app.app_config.common.sensitive_word_avoidance.manager import SensitiveWordAvoidanceConfigManager
@@ -10,21 +12,27 @@ from core.app.app_config.entities import EasyUIBasedAppConfig, EasyUIBasedAppMod
 from core.app.app_config.features.file_upload.manager import FileUploadConfigManager
 from core.app.app_config.features.more_like_this.manager import MoreLikeThisConfigManager
 from core.app.app_config.features.text_to_speech.manager import TextToSpeechConfigManager
-from models.model import App, AppMode, AppModelConfig
+from models.model import AnnotationReplyConfig, App, AppMode, AppModelConfig, AppModelConfigDict
 
 
 class CompletionAppConfig(EasyUIBasedAppConfig):
     """
     Completion App Config Entity.
     """
+
     pass
 
 
 class CompletionAppConfigManager(BaseAppConfigManager):
     @classmethod
-    def get_app_config(cls, app_model: App,
-                       app_model_config: AppModelConfig,
-                       override_config_dict: Optional[dict] = None) -> CompletionAppConfig:
+    def get_app_config(
+        cls,
+        app_model: App,
+        app_model_config: AppModelConfig,
+        override_config_dict: AppModelConfigDict | None = None,
+        *,
+        annotation_reply: AnnotationReplyConfig | None,
+    ) -> CompletionAppConfig:
         """
         Convert app model config to completion app config
         :param app_model: app model
@@ -38,32 +46,48 @@ class CompletionAppConfigManager(BaseAppConfigManager):
             config_from = EasyUIBasedAppModelConfigFrom.APP_LATEST_CONFIG
 
         if config_from != EasyUIBasedAppModelConfigFrom.ARGS:
-            app_model_config_dict = app_model_config.to_dict()
+            if annotation_reply is None:
+                raise ValueError("Annotation reply config is required")
+            app_model_config_dict = app_model_config.to_dict(annotation_reply=annotation_reply)
             config_dict = app_model_config_dict.copy()
         else:
+            if not override_config_dict:
+                raise Exception("override_config_dict is required when config_from is ARGS")
             config_dict = override_config_dict
 
-        app_mode = AppMode.value_of(app_model.mode)
-        app_config = CompletionAppConfig(
+        return cls.get_app_config_from_dict(
             tenant_id=app_model.tenant_id,
             app_id=app_model.id,
+            app_model_config_id=app_model_config.id,
+            app_mode=AppMode.value_of(app_model.mode),
+            config_dict=config_dict,
+            config_from=config_from,
+        )
+
+    @classmethod
+    def get_app_config_from_dict(
+        cls,
+        *,
+        tenant_id: str,
+        app_id: str,
+        app_model_config_id: str,
+        app_mode: AppMode,
+        config_dict: AppModelConfigDict,
+        config_from: EasyUIBasedAppModelConfigFrom,
+    ) -> CompletionAppConfig:
+        """Convert materialized configuration without requiring ORM records."""
+        app_config = CompletionAppConfig(
+            tenant_id=tenant_id,
+            app_id=app_id,
             app_mode=app_mode,
             app_model_config_from=config_from,
-            app_model_config_id=app_model_config.id,
-            app_model_config_dict=config_dict,
-            model=ModelConfigManager.convert(
-                config=config_dict
-            ),
-            prompt_template=PromptTemplateConfigManager.convert(
-                config=config_dict
-            ),
-            sensitive_word_avoidance=SensitiveWordAvoidanceConfigManager.convert(
-                config=config_dict
-            ),
-            dataset=DatasetConfigManager.convert(
-                config=config_dict
-            ),
-            additional_features=cls.convert_features(config_dict, app_mode)
+            app_model_config_id=app_model_config_id,
+            app_model_config_dict=cast(dict[str, Any], config_dict),
+            model=ModelConfigManager.convert(config=config_dict),
+            prompt_template=PromptTemplateConfigManager.convert(config=config_dict),
+            sensitive_word_avoidance=SensitiveWordAvoidanceConfigManager.convert(config=config_dict),
+            dataset=DatasetConfigManager.convert(config=config_dict),
+            additional_features=cls.convert_features(config_dict, app_mode),
         )
 
         app_config.variables, app_config.external_data_variables = BasicVariablesConfigManager.convert(
@@ -73,7 +97,7 @@ class CompletionAppConfigManager(BaseAppConfigManager):
         return app_config
 
     @classmethod
-    def config_validate(cls, tenant_id: str, config: dict) -> dict:
+    def config_validate(cls, tenant_id: str, config: dict[str, Any], session: Session) -> AppModelConfigDict:
         """
         Validate for completion app model config
 
@@ -101,8 +125,9 @@ class CompletionAppConfigManager(BaseAppConfigManager):
         related_config_keys.extend(current_related_config_keys)
 
         # dataset_query_variable
-        config, current_related_config_keys = DatasetConfigManager.validate_and_set_defaults(tenant_id, app_mode,
-                                                                                             config)
+        config, current_related_config_keys = DatasetConfigManager.validate_and_set_defaults(
+            tenant_id, app_mode, config, session
+        )
         related_config_keys.extend(current_related_config_keys)
 
         # text_to_speech
@@ -114,8 +139,9 @@ class CompletionAppConfigManager(BaseAppConfigManager):
         related_config_keys.extend(current_related_config_keys)
 
         # moderation validation
-        config, current_related_config_keys = SensitiveWordAvoidanceConfigManager.validate_and_set_defaults(tenant_id,
-                                                                                                            config)
+        config, current_related_config_keys = SensitiveWordAvoidanceConfigManager.validate_and_set_defaults(
+            tenant_id, config
+        )
         related_config_keys.extend(current_related_config_keys)
 
         related_config_keys = list(set(related_config_keys))
@@ -123,4 +149,4 @@ class CompletionAppConfigManager(BaseAppConfigManager):
         # Filter out extra parameters
         filtered_config = {key: config.get(key) for key in related_config_keys}
 
-        return filtered_config
+        return cast(AppModelConfigDict, filtered_config)

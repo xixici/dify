@@ -1,22 +1,5 @@
-import Cookies from 'js-cookie'
+import { defaultLocale, supportedLocales } from './locale'
 
-import { changeLanguage } from '@/i18n/i18next-config'
-import { LOCALE_COOKIE_NAME } from '@/config'
-import { LanguagesSupported } from '@/i18n/language'
+export const i18n = { defaultLocale, locales: supportedLocales } as const
 
-export const i18n = {
-  defaultLocale: 'en-US',
-  locales: LanguagesSupported,
-} as const
-
-export type Locale = typeof i18n['locales'][number]
-
-export const getLocaleOnClient = (): Locale => {
-  return Cookies.get(LOCALE_COOKIE_NAME) as Locale || i18n.defaultLocale
-}
-
-export const setLocaleOnClient = (locale: Locale, reloadPage = true) => {
-  Cookies.set(LOCALE_COOKIE_NAME, locale)
-  changeLanguage(locale)
-  reloadPage && location.reload()
-}
+export type { Locale } from './locale'

@@ -1,38 +1,55 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
-import cn from 'classnames'
-import { ChevronDown } from '@/app/components/base/icons/src/vender/line/arrows'
-import Popover from '@/app/components/base/popover'
+import { cn } from '@langgenius/dify-ui/cn'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectItemIndicator,
+  SelectItemText,
+  SelectTrigger,
+  SelectValue,
+} from '@langgenius/dify-ui/select'
+import * as React from 'react'
+import { languages } from '@/i18n/language'
 
-export type ILanguageSelectProps = {
+type ILanguageSelectProps = {
   currentLanguage: string
   onSelect: (language: string) => void
+  disabled?: boolean
 }
 
-const LanguageSelect: FC<ILanguageSelectProps> = ({
-  currentLanguage,
-  onSelect,
-}) => {
+const LanguageSelect: FC<ILanguageSelectProps> = ({ currentLanguage, onSelect, disabled }) => {
+  const supportedLanguages = languages.filter((language) => language.supported)
+
   return (
-    <Popover
-      manualClose
-      trigger='click'
-      htmlContent={
-        <div className='w-full py-1'>
-          <div className='py-2 px-3 mx-1 flex items-center gap-2 hover:bg-gray-100 rounded-lg cursor-pointer text-gray-700 text-sm' onClick={() => onSelect('English')}>English</div>
-          <div className='py-2 px-3 mx-1 flex items-center gap-2 hover:bg-gray-100 rounded-lg cursor-pointer text-gray-700 text-sm' onClick={() => onSelect('Chinese')}>简体中文</div>
-        </div>
-      }
-      btnElement={
-        <div className='inline-flex items-center'>
-          <span className='pr-[2px] text-xs leading-[18px] font-medium'>{currentLanguage === 'English' ? 'English' : '简体中文'}</span>
-          <ChevronDown className='w-3 h-3 opacity-60' />
-        </div>
-      }
-      btnClassName={open => cn('!border-0 !px-0 !py-0 !bg-inherit !hover:bg-inherit', open ? 'text-blue-600' : 'text-gray-500')}
-      className='!w-[120px] h-fit !z-20 !translate-x-0 !left-[-16px]'
-    />
+    <Select
+      value={currentLanguage}
+      onValueChange={(value) => {
+        if (value == null) return
+        onSelect(value)
+      }}
+      disabled={disabled}
+    >
+      <SelectTrigger
+        size="small"
+        aria-label="language"
+        className={cn(
+          'mx-1 w-auto shrink-0 bg-components-button-tertiary-bg text-components-button-tertiary-text hover:bg-components-button-tertiary-bg',
+          'data-disabled:cursor-not-allowed data-disabled:bg-components-button-tertiary-bg-disabled data-disabled:text-components-button-tertiary-text-disabled data-disabled:hover:bg-components-button-tertiary-bg-disabled',
+        )}
+      >
+        <SelectValue placeholder={<span>&nbsp;</span>} />
+      </SelectTrigger>
+      <SelectContent className="w-max">
+        {supportedLanguages.map(({ prompt_name }) => (
+          <SelectItem key={prompt_name} value={prompt_name}>
+            <SelectItemText>{prompt_name}</SelectItemText>
+            <SelectItemIndicator />
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 export default React.memo(LanguageSelect)

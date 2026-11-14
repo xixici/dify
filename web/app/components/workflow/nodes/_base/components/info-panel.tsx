@@ -1,25 +1,18 @@
 'use client'
-import type { FC } from 'react'
-import React from 'react'
+import type { FC, ReactNode } from 'react'
+import * as React from 'react'
 
-type Props = {
+type Props = Readonly<{
   title: string
-  content: string | JSX.Element
-}
+  content: ReactNode
+}>
 
-const InfoPanel: FC<Props> = ({
-  title,
-  content,
-}) => {
+const InfoPanel: FC<Props> = ({ title, content }) => {
   return (
     <div>
-      <div className='px-[5px] py-[3px] bg-gray-100 rounded-md'>
-        <div className='leading-4 text-[10px] font-medium text-gray-500 uppercase'>
-          {title}
-        </div>
-        <div className='leading-4 text-xs font-normal text-gray-700'>
-          {content}
-        </div>
+      <div className="flex flex-col gap-y-0.5 rounded-md bg-workflow-block-parma-bg px-1.25 py-0.75">
+        <div className="system-2xs-semibold-uppercase text-text-secondary uppercase">{title}</div>
+        <div className="system-xs-regular wrap-break-word text-text-tertiary">{content}</div>
       </div>
     </div>
   )

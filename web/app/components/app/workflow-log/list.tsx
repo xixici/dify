@@ -1,65 +1,137 @@
 'use client'
+
+import type {
+  AppDetailWithSite,
+  WorkflowAppLogPaginationResponse,
+  WorkflowAppLogPartialResponse,
+} from '@dify/contracts/api/console/apps/types.gen'
 import type { FC } from 'react'
-import React, { useState } from 'react'
-import dayjs from 'dayjs'
+import type { WorkflowLogDetails, WorkflowRunTriggeredFrom } from '@/models/log'
+import { ArrowDownIcon } from '@heroicons/react/24/outline'
+import { cn } from '@langgenius/dify-ui/cn'
+import {
+  Drawer,
+  DrawerBackdrop,
+  DrawerContent,
+  DrawerPopup,
+  DrawerPortal,
+  DrawerTrigger,
+  DrawerViewport,
+} from '@langgenius/dify-ui/drawer'
+import { StatusDot } from '@langgenius/dify-ui/status-dot'
+import * as React from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import cn from 'classnames'
-import s from './style.module.css'
+import { LoadingPlaceholder } from '@/app/components/base/loading-placeholder'
+import useTimestamp from '@/hooks/use-timestamp'
 import DetailPanel from './detail'
-import type { WorkflowAppLogDetail, WorkflowLogsResponse } from '@/models/log'
-import type { App } from '@/types/app'
-import Loading from '@/app/components/base/loading'
-import Drawer from '@/app/components/base/drawer'
-import Indicator from '@/app/components/header/indicator'
-import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
+import TriggerByDisplay from './trigger-by-display'
 
 type ILogs = {
-  logs?: WorkflowLogsResponse
-  appDetail?: App
+  logs?: WorkflowAppLogPaginationResponse
+  appDetail?: AppDetailWithSite
   onRefresh: () => void
 }
 
 const defaultValue = 'N/A'
 
 const WorkflowAppLogList: FC<ILogs> = ({ logs, appDetail, onRefresh }) => {
-  const { t } = useTranslation()
-
-  const media = useBreakpoints()
-  const isMobile = media === MediaType.mobile
+  const { t } = useTranslation(['appLog'])
+  const { formatTime } = useTimestamp()
 
   const [showDrawer, setShowDrawer] = useState<boolean>(false)
-  const [currentLog, setCurrentLog] = useState<WorkflowAppLogDetail | undefined>()
+  const [currentLog, setCurrentLog] = useState<WorkflowAppLogPartialResponse | undefined>()
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [localLogs, setLocalLogs] = useState<WorkflowAppLogPartialResponse[]>(logs?.data || [])
 
-  const statusTdRender = (status: string) => {
+  useEffect(() => {
+    if (!logs?.data) {
+      setLocalLogs([])
+      return
+    }
+
+    const sortedLogs = [...logs.data].sort((a, b) => {
+      const result = (a.created_at ?? 0) - (b.created_at ?? 0)
+      return sortOrder === 'asc' ? result : -result
+    })
+
+    setLocalLogs(sortedLogs)
+  }, [logs?.data, sortOrder])
+
+  const handleSort = () => {
+    setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+  }
+
+  const isWorkflow = appDetail?.mode === 'workflow'
+
+  const statusTdRender = (status?: string | null) => {
     if (status === 'succeeded') {
       return (
-        <div className='inline-flex items-center gap-1'>
-          <Indicator color={'green'} />
-          <span>Success</span>
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="success" />
+          <span className="text-util-colors-green-green-600">
+            {t(($) => $['status.succeeded'], { ns: 'appLog' })}
+          </span>
         </div>
       )
     }
     if (status === 'failed') {
       return (
-        <div className='inline-flex items-center gap-1'>
-          <Indicator color={'red'} />
-          <span className='text-red-600'>Fail</span>
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="error" />
+          <span className="text-util-colors-red-red-600">
+            {t(($) => $['status.failed'], { ns: 'appLog' })}
+          </span>
         </div>
       )
     }
     if (status === 'stopped') {
       return (
-        <div className='inline-flex items-center gap-1'>
-          <Indicator color={'yellow'} />
-          <span>Stop</span>
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="warning" />
+          <span className="text-util-colors-warning-warning-600">
+            {t(($) => $['status.stopped'], { ns: 'appLog' })}
+          </span>
+        </div>
+      )
+    }
+    if (status === 'paused') {
+      return (
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="warning" />
+          <span className="text-util-colors-warning-warning-600">
+            {t(($) => $['status.paused'], { ns: 'appLog' })}
+          </span>
+        </div>
+      )
+    }
+    if (status === 'scheduled') {
+      return (
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="disabled" />
+          <span className="text-text-secondary">
+            {t(($) => $['status.scheduled'], { ns: 'appLog' })}
+          </span>
         </div>
       )
     }
     if (status === 'running') {
       return (
-        <div className='inline-flex items-center gap-1'>
-          <Indicator color={'blue'} />
-          <span className='text-primary-600'>Running</span>
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="normal" />
+          <span className="text-util-colors-blue-light-blue-light-600">
+            {t(($) => $['status.running'], { ns: 'appLog' })}
+          </span>
+        </div>
+      )
+    }
+    if (status === 'partial-succeeded') {
+      return (
+        <div className="inline-flex items-center gap-1 system-xs-semibold-uppercase">
+          <StatusDot status="success" />
+          <span className="text-util-colors-green-green-600">
+            {t(($) => $['status.partial-succeeded'], { ns: 'appLog' })}
+          </span>
         </div>
       )
     }
@@ -71,60 +143,163 @@ const WorkflowAppLogList: FC<ILogs> = ({ logs, appDetail, onRefresh }) => {
     setCurrentLog(undefined)
   }
 
-  if (!logs || !appDetail)
-    return <Loading />
+  if (!logs || !appDetail) return <LoadingPlaceholder />
 
   return (
-    <div className='overflow-x-auto'>
-      <table className={`w-full min-w-[440px] border-collapse border-0 text-sm mt-3 ${s.logTable}`}>
-        <thead className="h-8 !pl-3 py-2 leading-[18px] border-b border-gray-200 text-xs text-gray-500 font-medium">
-          <tr>
-            <td className='w-[1.375rem] whitespace-nowrap'></td>
-            <td className='whitespace-nowrap'>{t('appLog.table.header.startTime')}</td>
-            <td className='whitespace-nowrap'>{t('appLog.table.header.status')}</td>
-            <td className='whitespace-nowrap'>{t('appLog.table.header.runtime')}</td>
-            <td className='whitespace-nowrap'>{t('appLog.table.header.tokens')}</td>
-            <td className='whitespace-nowrap'>{t('appLog.table.header.user')}</td>
-            {/* <td className='whitespace-nowrap'>{t('appLog.table.header.version')}</td> */}
-          </tr>
-        </thead>
-        <tbody className="text-gray-700 text-[13px]">
-          {logs.data.map((log: WorkflowAppLogDetail) => {
-            const endUser = log.created_by_end_user ? log.created_by_end_user.session_id : defaultValue
-            return <tr
-              key={log.id}
-              className={`border-b border-gray-200 h-8 hover:bg-gray-50 cursor-pointer ${currentLog?.id !== log.id ? '' : 'bg-gray-50'}`}
-              onClick={() => {
-                setCurrentLog(log)
-                setShowDrawer(true)
-              }}>
-              <td className='text-center align-middle'>{!log.read_at && <span className='inline-block bg-[#3F83F8] h-1.5 w-1.5 rounded'></span>}</td>
-              <td className='w-[160px]'>{dayjs.unix(log.created_at).format(t('appLog.dateTimeFormat') as string)}</td>
-              <td>{statusTdRender(log.workflow_run.status)}</td>
-              <td>
-                <div className={cn(
-                  log.workflow_run.elapsed_time === 0 && 'text-gray-400',
-                )}>{`${log.workflow_run.elapsed_time.toFixed(3)}s`}</div>
-              </td>
-              <td>{log.workflow_run.total_tokens}</td>
-              <td>
-                <div className={cn(endUser === defaultValue ? 'text-gray-400' : 'text-gray-700', 'text-sm overflow-hidden text-ellipsis whitespace-nowrap')}>
-                  {endUser}
-                </div>
-              </td>
-              {/* <td>VERSION</td> */}
-            </tr>
-          })}
-        </tbody>
-      </table>
+    <div className="overflow-x-auto">
       <Drawer
-        isOpen={showDrawer}
-        onClose={onCloseDrawer}
-        mask={isMobile}
-        footer={null}
-        panelClassname='mt-16 mx-2 sm:mr-2 mb-3 !p-0 !max-w-[600px] rounded-xl border border-gray-200'
+        open={showDrawer}
+        modal
+        swipeDirection="right"
+        onOpenChange={(open) => {
+          if (!open) onCloseDrawer()
+        }}
       >
-        <DetailPanel onClose={onCloseDrawer} runID={currentLog?.workflow_run.id || ''} />
+        <table className={cn('mt-2 w-full min-w-110 border-collapse border-0')}>
+          <thead className="system-xs-medium-uppercase text-text-tertiary">
+            <tr>
+              <td className="w-5 rounded-s-lg bg-background-section-burn ps-2 pe-1 whitespace-nowrap"></td>
+              <th
+                aria-sort={sortOrder === 'asc' ? 'ascending' : 'descending'}
+                className="bg-background-section-burn py-1.5 ps-3 text-start font-[weight:inherit] whitespace-nowrap"
+              >
+                <button
+                  type="button"
+                  className="flex cursor-pointer items-center border-none bg-transparent p-0 text-start hover:text-text-secondary focus-visible:ring-1 focus-visible:ring-components-input-border-active focus-visible:outline-hidden"
+                  onClick={handleSort}
+                >
+                  {t(($) => $['table.header.startTime'], { ns: 'appLog' })}
+                  <ArrowDownIcon
+                    className={cn(
+                      'ms-0.5 size-3 stroke-current stroke-2 transition-all',
+                      'text-text-tertiary',
+                      sortOrder === 'asc' ? 'rotate-180' : '',
+                    )}
+                    aria-hidden="true"
+                  />
+                </button>
+              </th>
+              <th className="bg-background-section-burn py-1.5 ps-3 text-start font-[weight:inherit] whitespace-nowrap">
+                {t(($) => $['table.header.status'], { ns: 'appLog' })}
+              </th>
+              <th className="bg-background-section-burn py-1.5 ps-3 text-start font-[weight:inherit] whitespace-nowrap">
+                {t(($) => $['table.header.runtime'], { ns: 'appLog' })}
+              </th>
+              <th className="bg-background-section-burn py-1.5 ps-3 text-start font-[weight:inherit] whitespace-nowrap">
+                {t(($) => $['table.header.tokens'], { ns: 'appLog' })}
+              </th>
+              <th
+                className={cn(
+                  'bg-background-section-burn py-1.5 ps-3 text-start font-[weight:inherit] whitespace-nowrap',
+                  !isWorkflow ? 'rounded-e-lg' : '',
+                )}
+              >
+                {t(($) => $['table.header.user'], { ns: 'appLog' })}
+              </th>
+              {isWorkflow && (
+                <th className="rounded-e-lg bg-background-section-burn py-1.5 ps-3 text-start font-[weight:inherit] whitespace-nowrap">
+                  {t(($) => $['table.header.triggered_from'], { ns: 'appLog' })}
+                </th>
+              )}
+            </tr>
+          </thead>
+          <tbody className="system-sm-regular text-text-secondary">
+            {localLogs.map((log: WorkflowAppLogPartialResponse) => {
+              const endUser = log.created_by_end_user
+                ? log.created_by_end_user.session_id
+                : log.created_by_account
+                  ? log.created_by_account.name
+                  : defaultValue
+              return (
+                <tr
+                  key={log.id}
+                  className={cn(
+                    'cursor-pointer border-b border-divider-subtle hover:bg-background-default-hover',
+                    currentLog?.id !== log.id ? '' : 'bg-background-default-hover',
+                  )}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest('button, a')) return
+                    event.currentTarget
+                      .querySelector<HTMLButtonElement>('button[data-log-detail-trigger]')
+                      ?.click()
+                  }}
+                >
+                  <td className="h-4">
+                    {/* The console workflow-log response does not declare read_at yet. */}
+                    {!('read_at' in log && log.read_at) && (
+                      <div className="flex items-center p-3 pe-0.5">
+                        <span className="inline-block size-1.5 rounded-sm bg-util-colors-blue-blue-500"></span>
+                      </div>
+                    )}
+                  </td>
+                  <td className="w-45 p-3 pe-2">
+                    <DrawerTrigger
+                      data-log-detail-trigger
+                      className="w-full cursor-pointer rounded-sm text-start"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setCurrentLog(log)
+                        setShowDrawer(true)
+                      }}
+                    >
+                      {log.created_at
+                        ? formatTime(
+                            log.created_at,
+                            t(($) => $.dateTimeFormat, { ns: 'appLog' }) as string,
+                          )
+                        : defaultValue}
+                    </DrawerTrigger>
+                  </td>
+                  <td className="p-3 pe-2">{statusTdRender(log.workflow_run?.status)}</td>
+                  <td className="p-3 pe-2">
+                    <div className={cn(!log.workflow_run?.elapsed_time && 'text-text-quaternary')}>
+                      {`${(log.workflow_run?.elapsed_time ?? 0).toFixed(3)}s`}
+                    </div>
+                  </td>
+                  <td className="p-3 pe-2">{log.workflow_run?.total_tokens}</td>
+                  <td className="p-3 pe-2">
+                    <div
+                      className={cn(
+                        endUser === defaultValue ? 'text-text-quaternary' : 'text-text-secondary',
+                        'truncate',
+                      )}
+                    >
+                      {endUser}
+                    </div>
+                  </td>
+                  {isWorkflow && (
+                    <td className="p-3 pe-2">
+                      <TriggerByDisplay
+                        triggeredFrom={log.workflow_run?.triggered_from as WorkflowRunTriggeredFrom}
+                        triggerMetadata={
+                          (log.details as WorkflowLogDetails | undefined)?.trigger_metadata
+                        }
+                      />
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        <DrawerPortal>
+          <DrawerBackdrop className="sm:bg-transparent" />
+          <DrawerViewport>
+            <DrawerPopup className="p-0! data-[swipe-direction=right]:top-16 data-[swipe-direction=right]:right-2 data-[swipe-direction=right]:bottom-3 data-[swipe-direction=right]:h-auto data-[swipe-direction=right]:w-full data-[swipe-direction=right]:max-w-150 data-[swipe-direction=right]:rounded-xl data-[swipe-direction=right]:ring-1">
+              <DrawerContent>
+                <DetailPanel
+                  appId={appDetail.id}
+                  onClose={onCloseDrawer}
+                  runID={currentLog?.workflow_run?.id || ''}
+                  canReplay={
+                    currentLog?.workflow_run?.triggered_from === 'app-run' ||
+                    currentLog?.workflow_run?.triggered_from === 'debugging'
+                  }
+                />
+              </DrawerContent>
+            </DrawerPopup>
+          </DrawerViewport>
+        </DrawerPortal>
       </Drawer>
     </div>
   )

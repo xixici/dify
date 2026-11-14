@@ -1,529 +1,544 @@
+import type { Connection } from 'reactflow'
+import type { IterationNodeType } from '../nodes/iteration/types'
+import type { LoopNodeType } from '../nodes/loop/types'
+import type { Edge, Node, ValueSelector } from '../types'
+import { uniqBy } from 'es-toolkit/compat'
+import { useCallback } from 'react'
+import { getIncomers, getOutgoers } from 'reactflow'
+import { CUSTOM_ITERATION_START_NODE } from '@/app/components/workflow/nodes/iteration-start/constants'
+import { CUSTOM_LOOP_START_NODE } from '@/app/components/workflow/nodes/loop-start/constants'
+import { SUPPORT_OUTPUT_VARS_NODE } from '../constants'
+import { useHooksStore } from '../hooks-store'
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
-import dayjs from 'dayjs'
-import { uniqBy } from 'lodash-es'
-import { useContext } from 'use-context-selector'
-import produce from 'immer'
-import {
-  getIncomers,
-  getOutgoers,
-  useReactFlow,
-  useStoreApi,
-} from 'reactflow'
-import type {
-  Connection,
-  Viewport,
-} from 'reactflow'
-import {
-  getLayoutByDagre,
-  initialEdges,
-  initialNodes,
-} from '../utils'
-import type {
-  Edge,
-  Node,
-  ValueSelector,
-} from '../types'
-import {
-  BlockEnum,
-  WorkflowRunningStatus,
-} from '../types'
-import {
-  useStore,
-  useWorkflowStore,
-} from '../store'
-import {
-  AUTO_LAYOUT_OFFSET,
-  SUPPORT_OUTPUT_VARS_NODE,
-  WORKFLOW_DATA_UPDATE,
-} from '../constants'
-import { findUsedVarNodes, getNodeOutputVars, updateNodeVars } from '../nodes/_base/components/variable/utils'
-import { useNodesExtraData } from './use-nodes-data'
-import { useWorkflowTemplate } from './use-workflow-template'
-import { useNodesSyncDraft } from './use-nodes-sync-draft'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import {
-  fetchNodesDefaultConfigs,
-  fetchPublishedWorkflow,
-  fetchWorkflowDraft,
-  syncWorkflowDraft,
-} from '@/service/workflow'
-import type { FetchWorkflowDraftResponse } from '@/types/workflow'
-import {
-  fetchAllBuiltInTools,
-  fetchAllCustomTools,
-} from '@/service/tools'
-import I18n from '@/context/i18n'
-import { useEventEmitterContextContext } from '@/context/event-emitter'
+  findUsedVarNodes,
+  getNodeOutputVars,
+  updateNodeVars,
+} from '../nodes/_base/components/variable/utils'
+import { CUSTOM_NOTE_NODE } from '../note-node/constants'
+import { useStore, useWorkflowStore } from '../store'
+import { BlockEnum, WorkflowRunningStatus } from '../types'
+import { getNodeCatalogType } from '../utils'
+import { getWorkflowEntryNode, isWorkflowEntryNode } from '../utils/workflow-entry'
+import { useAvailableBlocks } from './use-available-blocks'
+import { useCollaborativeWorkflow } from './use-collaborative-workflow'
+import { useNodesMetaData } from './use-nodes-meta-data'
 
-export const useIsChatMode = () => {
-  const appDetail = useAppStore(s => s.appDetail)
-
-  return appDetail?.mode === 'advanced-chat'
-}
+const includesConnectionBlock = (blocks: readonly BlockEnum[], type: BlockEnum) =>
+  blocks.includes(type) ||
+  // The add-node catalog hides legacy Human Input when V2 is enabled.
+  // Existing legacy nodes still use the same connection rules as V2.
+  (type === BlockEnum.HumanInput && blocks.includes(BlockEnum.HumanInputV2))
 
 export const useWorkflow = () => {
-  const { locale } = useContext(I18n)
-  const store = useStoreApi()
-  const reactflow = useReactFlow()
-  const workflowStore = useWorkflowStore()
-  const nodesExtraData = useNodesExtraData()
-  const { handleSyncWorkflowDraft } = useNodesSyncDraft()
-  const { eventEmitter } = useEventEmitterContextContext()
+  const collaborativeWorkflow = useCollaborativeWorkflow()
+  const { getAvailableBlocks } = useAvailableBlocks()
+  const { nodesMap } = useNodesMetaData()
 
-  const handleLayout = useCallback(async () => {
-    workflowStore.setState({ nodeAnimation: true })
-    const {
-      getNodes,
-      edges,
-      setNodes,
-    } = store.getState()
-    const { setViewport } = reactflow
-    const nodes = getNodes()
-    const layout = getLayoutByDagre(nodes, edges)
+  const getNodeById = useCallback(
+    (nodeId: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+      const currentNode = nodes.find((node) => node.id === nodeId)
+      return currentNode
+    },
+    [collaborativeWorkflow],
+  )
 
-    const newNodes = produce(nodes, (draft) => {
-      draft.forEach((node) => {
-        const nodeWithPosition = layout.node(node.id)
-        node.position = {
-          x: nodeWithPosition.x + AUTO_LAYOUT_OFFSET.x,
-          y: nodeWithPosition.y + AUTO_LAYOUT_OFFSET.y,
-        }
-      })
-    })
-    setNodes(newNodes)
-    const zoom = 0.7
-    setViewport({
-      x: 0,
-      y: 0,
-      zoom,
-    })
-    setTimeout(() => {
-      handleSyncWorkflowDraft()
-    })
-  }, [store, reactflow, handleSyncWorkflowDraft, workflowStore])
+  const getTreeLeafNodes = useCallback(
+    (nodeId: string) => {
+      const { nodes, edges } = collaborativeWorkflow.getState()
+      const currentNode = nodes.find((node) => node.id === nodeId)
 
-  const getTreeLeafNodes = useCallback((nodeId: string) => {
-    const {
-      getNodes,
-      edges,
-    } = store.getState()
-    const nodes = getNodes()
-    const startNode = nodes.find(node => node.data.type === BlockEnum.Start)
+      let startNodes =
+        nodes.filter((node) => nodesMap?.[node.data.type as BlockEnum]?.metaData.isStart) || []
 
-    if (!startNode)
-      return []
-
-    const list: Node[] = []
-    const preOrder = (root: Node, callback: (node: Node) => void) => {
-      if (root.id === nodeId)
-        return
-      const outgoers = getOutgoers(root, nodes, edges)
-
-      if (outgoers.length) {
-        outgoers.forEach((outgoer) => {
-          preOrder(outgoer, callback)
-        })
+      if (currentNode?.parentId) {
+        const startNode = nodes.find(
+          (node) =>
+            node.parentId === currentNode.parentId &&
+            (node.type === CUSTOM_ITERATION_START_NODE || node.type === CUSTOM_LOOP_START_NODE),
+        )
+        if (startNode) startNodes = [startNode]
       }
-      else {
-        if (root.id !== nodeId)
-          callback(root)
-      }
-    }
-    preOrder(startNode, (node) => {
-      list.push(node)
-    })
 
-    const incomers = getIncomers({ id: nodeId } as Node, nodes, edges)
+      if (!startNodes.length) return []
 
-    list.push(...incomers)
-
-    return uniqBy(list, 'id').filter((item) => {
-      return SUPPORT_OUTPUT_VARS_NODE.includes(item.data.type)
-    })
-  }, [store])
-
-  const getBeforeNodesInSameBranch = useCallback((nodeId: string) => {
-    const {
-      getNodes,
-      edges,
-    } = store.getState()
-    const nodes = getNodes()
-    const currentNode = nodes.find(node => node.id === nodeId)
-    const list: Node[] = []
-
-    if (!currentNode)
-      return list
-
-    const traverse = (root: Node, callback: (node: Node) => void) => {
-      if (root) {
-        const incomers = getIncomers(root, nodes, edges)
-
-        if (incomers.length) {
-          incomers.forEach((node) => {
-            if (!list.find(n => node.id === n.id)) {
-              callback(node)
-              traverse(node, callback)
-            }
-          })
-        }
-      }
-    }
-    traverse(currentNode, (node) => {
-      list.push(node)
-    })
-
-    const length = list.length
-    if (length) {
-      return uniqBy(list, 'id').reverse().filter((item) => {
-        return SUPPORT_OUTPUT_VARS_NODE.includes(item.data.type)
-      })
-    }
-
-    return []
-  }, [store])
-
-  const getAfterNodesInSameBranch = useCallback((nodeId: string) => {
-    const {
-      getNodes,
-      edges,
-    } = store.getState()
-    const nodes = getNodes()
-    const currentNode = nodes.find(node => node.id === nodeId)!
-
-    if (!currentNode)
-      return []
-    const list: Node[] = [currentNode]
-
-    const traverse = (root: Node, callback: (node: Node) => void) => {
-      if (root) {
+      const list: Node[] = []
+      const preOrder = (root: Node, callback: (node: Node) => void) => {
+        if (root.id === nodeId) return
         const outgoers = getOutgoers(root, nodes, edges)
 
         if (outgoers.length) {
-          outgoers.forEach((node) => {
-            callback(node)
-            traverse(node, callback)
+          outgoers.forEach((outgoer) => {
+            preOrder(outgoer, callback)
           })
+        } else {
+          if (root.id !== nodeId) callback(root)
         }
       }
-    }
-    traverse(currentNode, (node) => {
-      list.push(node)
-    })
-
-    return uniqBy(list, 'id')
-  }, [store])
-
-  const getBeforeNodeById = useCallback((nodeId: string) => {
-    const {
-      getNodes,
-      edges,
-    } = store.getState()
-    const nodes = getNodes()
-    const node = nodes.find(node => node.id === nodeId)!
-
-    return getIncomers(node, nodes, edges)
-  }, [store])
-
-  const handleOutVarRenameChange = useCallback((nodeId: string, oldValeSelector: ValueSelector, newVarSelector: ValueSelector) => {
-    const { getNodes, setNodes } = store.getState()
-    const afterNodes = getAfterNodesInSameBranch(nodeId)
-    const effectNodes = findUsedVarNodes(oldValeSelector, afterNodes)
-    // console.log(effectNodes)
-    if (effectNodes.length > 0) {
-      const newNodes = getNodes().map((node) => {
-        if (effectNodes.find(n => n.id === node.id))
-          return updateNodeVars(node, oldValeSelector, newVarSelector)
-
-        return node
+      startNodes.forEach((startNode) => {
+        preOrder(startNode, (node) => {
+          list.push(node)
+        })
       })
-      setNodes(newNodes)
-    }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store])
+      const incomers = getIncomers({ id: nodeId } as Node, nodes, edges)
 
-  const isVarUsedInNodes = useCallback((varSelector: ValueSelector) => {
-    const nodeId = varSelector[0]
-    const afterNodes = getAfterNodesInSameBranch(nodeId)
-    const effectNodes = findUsedVarNodes(varSelector, afterNodes)
-    return effectNodes.length > 0
-  }, [getAfterNodesInSameBranch])
+      list.push(...incomers)
 
-  const removeUsedVarInNodes = useCallback((varSelector: ValueSelector) => {
-    const nodeId = varSelector[0]
-    const { getNodes, setNodes } = store.getState()
-    const afterNodes = getAfterNodesInSameBranch(nodeId)
-    const effectNodes = findUsedVarNodes(varSelector, afterNodes)
-    if (effectNodes.length > 0) {
-      const newNodes = getNodes().map((node) => {
-        if (effectNodes.find(n => n.id === node.id))
-          return updateNodeVars(node, varSelector, [])
-
-        return node
+      return uniqBy(list, 'id').filter((item: Node) => {
+        return SUPPORT_OUTPUT_VARS_NODE.includes(item.data.type)
       })
-      setNodes(newNodes)
-    }
-  }, [getAfterNodesInSameBranch, store])
+    },
+    [collaborativeWorkflow, nodesMap],
+  )
 
-  const isNodeVarsUsedInNodes = useCallback((node: Node, isChatMode: boolean) => {
-    const outputVars = getNodeOutputVars(node, isChatMode)
-    const isUsed = outputVars.some((varSelector) => {
-      return isVarUsedInNodes(varSelector)
-    })
-    return isUsed
-  }, [isVarUsedInNodes])
+  const getBeforeNodesInSameBranch = useCallback(
+    (nodeId: string, newNodes?: Node[], newEdges?: Edge[]) => {
+      const { nodes: oldNodes, edges } = collaborativeWorkflow.getState()
+      const nodes = newNodes || oldNodes
+      const currentNode = nodes.find((node) => node.id === nodeId)
 
-  const isValidConnection = useCallback(({ source, target }: Connection) => {
-    const {
-      edges,
-      getNodes,
-    } = store.getState()
-    const nodes = getNodes()
-    const sourceNode: Node = nodes.find(node => node.id === source)!
-    const targetNode: Node = nodes.find(node => node.id === target)!
+      const list: Node[] = []
 
-    if (sourceNode && targetNode) {
-      const sourceNodeAvailableNextNodes = nodesExtraData[sourceNode.data.type].availableNextNodes
-      const targetNodeAvailablePrevNodes = [...nodesExtraData[targetNode.data.type].availablePrevNodes, BlockEnum.Start]
-      if (!sourceNodeAvailableNextNodes.includes(targetNode.data.type))
-        return false
+      if (!currentNode) return list
 
-      if (!targetNodeAvailablePrevNodes.includes(sourceNode.data.type))
-        return false
-    }
+      if (currentNode.parentId) {
+        const parentNode = nodes.find((node) => node.id === currentNode.parentId)
+        if (parentNode) {
+          const parentList = getBeforeNodesInSameBranch(parentNode.id)
 
-    const hasCycle = (node: Node, visited = new Set()) => {
-      if (visited.has(node.id))
-        return false
-
-      visited.add(node.id)
-
-      for (const outgoer of getOutgoers(node, nodes, edges)) {
-        if (outgoer.id === source)
-          return true
-        if (hasCycle(outgoer, visited))
-          return true
+          list.push(...parentList)
+        }
       }
-    }
 
-    return !hasCycle(targetNode)
-  }, [store, nodesExtraData])
+      const traverse = (root: Node, callback: (node: Node) => void) => {
+        if (root) {
+          const incomers = getIncomers(root, nodes, newEdges || edges)
 
-  const formatTimeFromNow = useCallback((time: number) => {
-    return dayjs(time).locale(locale === 'zh-Hans' ? 'zh-cn' : locale).fromNow()
-  }, [locale])
+          if (incomers.length) {
+            incomers.forEach((node) => {
+              if (!list.find((n) => node.id === n.id)) {
+                callback(node)
+                traverse(node, callback)
+              }
+            })
+          }
+        }
+      }
+      traverse(currentNode, (node) => {
+        list.push(node)
+      })
 
-  const renderTreeFromRecord = useCallback((nodes: Node[], edges: Edge[], viewport?: Viewport) => {
-    const { setViewport } = reactflow
+      const length = list.length
+      if (length) {
+        return uniqBy(list, 'id')
+          .reverse()
+          .filter((item: Node) => {
+            return SUPPORT_OUTPUT_VARS_NODE.includes(item.data.type)
+          })
+      }
 
-    const nodesMap = nodes.map(node => ({ ...node, data: { ...node.data, selected: false } }))
+      return []
+    },
+    [collaborativeWorkflow],
+  )
 
-    eventEmitter?.emit({
-      type: WORKFLOW_DATA_UPDATE,
-      payload: {
-        nodes: initialNodes(nodesMap, edges),
-        edges: initialEdges(edges, nodesMap),
-      },
-    } as any)
+  const getBeforeNodesInSameBranchIncludeParent = useCallback(
+    (nodeId: string, newNodes?: Node[], newEdges?: Edge[]) => {
+      const nodes = getBeforeNodesInSameBranch(nodeId, newNodes, newEdges)
+      const { nodes: allNodes } = collaborativeWorkflow.getState()
+      const node = allNodes.find((n) => n.id === nodeId)
+      const parentNodeId = node?.parentId
+      const parentNode = allNodes.find((n) => n.id === parentNodeId)
+      if (parentNode) nodes.push(parentNode)
 
-    if (viewport)
-      setViewport(viewport)
-  }, [reactflow, eventEmitter])
+      return nodes
+    },
+    [getBeforeNodesInSameBranch, collaborativeWorkflow],
+  )
 
-  const getNode = useCallback((nodeId?: string) => {
-    const { getNodes } = store.getState()
-    const nodes = getNodes()
+  const getAfterNodesInSameBranch = useCallback(
+    (nodeId: string) => {
+      const { nodes, edges } = collaborativeWorkflow.getState()
+      const currentNode = nodes.find((node) => node.id === nodeId)!
 
-    return nodes.find(node => node.id === nodeId) || nodes.find(node => node.data.type === BlockEnum.Start)
-  }, [store])
+      if (!currentNode) return []
+      const list: Node[] = [currentNode]
 
-  const enableShortcuts = useCallback(() => {
-    const { setShortcutsDisabled } = workflowStore.getState()
-    setShortcutsDisabled(false)
-  }, [workflowStore])
+      const traverse = (root: Node, callback: (node: Node) => void) => {
+        if (root) {
+          const outgoers = getOutgoers(root, nodes, edges)
 
-  const disableShortcuts = useCallback(() => {
-    const { setShortcutsDisabled } = workflowStore.getState()
-    setShortcutsDisabled(true)
-  }, [workflowStore])
+          if (outgoers.length) {
+            outgoers.forEach((node) => {
+              callback(node)
+              traverse(node, callback)
+            })
+          }
+        }
+      }
+      traverse(currentNode, (node) => {
+        list.push(node)
+      })
+
+      return uniqBy(list, 'id')
+    },
+    [collaborativeWorkflow],
+  )
+
+  const getBeforeNodeById = useCallback(
+    (nodeId: string) => {
+      const { nodes, edges } = collaborativeWorkflow.getState()
+      const node = nodes.find((node) => node.id === nodeId)!
+
+      return getIncomers(node, nodes, edges)
+    },
+    [collaborativeWorkflow],
+  )
+
+  const getIterationNodeChildren = useCallback(
+    (nodeId: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+
+      return nodes.filter((node) => node.parentId === nodeId)
+    },
+    [collaborativeWorkflow],
+  )
+
+  const getLoopNodeChildren = useCallback(
+    (nodeId: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+
+      return nodes.filter((node) => node.parentId === nodeId)
+    },
+    [collaborativeWorkflow],
+  )
+
+  const isFromStartNode = useCallback(
+    (nodeId: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+      const currentNode = nodes.find((node) => node.id === nodeId)
+
+      if (!currentNode) return false
+
+      if (isWorkflowEntryNode(currentNode.data.type)) return true
+
+      const checkPreviousNodes = (node: Node) => {
+        const previousNodes = getBeforeNodeById(node.id)
+
+        for (const prevNode of previousNodes) {
+          if (isWorkflowEntryNode(prevNode.data.type)) return true
+          if (checkPreviousNodes(prevNode)) return true
+        }
+
+        return false
+      }
+
+      return checkPreviousNodes(currentNode)
+    },
+    [collaborativeWorkflow, getBeforeNodeById],
+  )
+
+  const handleOutVarRenameChange = useCallback(
+    (nodeId: string, oldValeSelector: ValueSelector, newVarSelector: ValueSelector) => {
+      const { nodes: allNodes, setNodes } = collaborativeWorkflow.getState()
+      const affectedNodes = findUsedVarNodes(oldValeSelector, allNodes)
+      if (affectedNodes.length > 0) {
+        const newNodes = allNodes.map((node) => {
+          if (affectedNodes.find((n) => n.id === node.id))
+            return updateNodeVars(node, oldValeSelector, newVarSelector)
+
+          return node
+        })
+        setNodes(newNodes)
+      }
+    },
+    [collaborativeWorkflow],
+  )
+
+  const isVarUsedInNodes = useCallback(
+    (varSelector: ValueSelector) => {
+      const nodeId = varSelector[0]
+      const afterNodes = getAfterNodesInSameBranch(nodeId!)
+      const effectNodes = findUsedVarNodes(varSelector, afterNodes)
+      return effectNodes.length > 0
+    },
+    [getAfterNodesInSameBranch],
+  )
+
+  const removeUsedVarInNodes = useCallback(
+    (varSelector: ValueSelector) => {
+      const nodeId = varSelector[0]
+      const { nodes, setNodes } = collaborativeWorkflow.getState()
+      const afterNodes = getAfterNodesInSameBranch(nodeId!)
+      const effectNodes = findUsedVarNodes(varSelector, afterNodes)
+      if (effectNodes.length > 0) {
+        const newNodes = nodes.map((node) => {
+          if (effectNodes.find((n) => n.id === node.id))
+            return updateNodeVars(node, varSelector, [])
+
+          return node
+        })
+        setNodes(newNodes)
+      }
+    },
+    [getAfterNodesInSameBranch, collaborativeWorkflow],
+  )
+
+  const isNodeVarsUsedInNodes = useCallback(
+    (node: Node, isChatflow: boolean) => {
+      const outputVars = getNodeOutputVars(node, isChatflow)
+      const isUsed = outputVars.some((varSelector) => {
+        return isVarUsedInNodes(varSelector)
+      })
+      return isUsed
+    },
+    [isVarUsedInNodes],
+  )
+
+  const getRootNodesById = useCallback(
+    (nodeId: string) => {
+      const { nodes, edges } = collaborativeWorkflow.getState()
+      const currentNode = nodes.find((node) => node.id === nodeId)
+
+      const rootNodes: Node[] = []
+
+      if (!currentNode) return rootNodes
+
+      if (currentNode.parentId) {
+        const parentNode = nodes.find((node) => node.id === currentNode.parentId)
+        if (parentNode) {
+          const parentList = getRootNodesById(parentNode.id)
+
+          rootNodes.push(...parentList)
+        }
+      }
+
+      const traverse = (root: Node, callback: (node: Node) => void) => {
+        if (root) {
+          const incomers = getIncomers(root, nodes, edges)
+
+          if (incomers.length) {
+            incomers.forEach((node) => {
+              traverse(node, callback)
+            })
+          } else {
+            callback(root)
+          }
+        }
+      }
+      traverse(currentNode, (node) => {
+        rootNodes.push(node)
+      })
+
+      const length = rootNodes.length
+      if (length) return uniqBy(rootNodes, 'id')
+
+      return []
+    },
+    [collaborativeWorkflow],
+  )
+
+  const getStartNodes = useCallback(
+    (nodes: Node[], currentNode?: Node) => {
+      const { id, parentId } = currentNode || {}
+      let startNodes: Node[] = []
+
+      if (parentId) {
+        const parentNode = nodes.find((node) => node.id === parentId)
+        if (!parentNode) throw new Error('Parent node not found')
+
+        const startNode = nodes.find(
+          (node) => node.id === (parentNode.data as IterationNodeType | LoopNodeType).start_node_id,
+        )
+        if (startNode) startNodes = [startNode]
+      } else {
+        startNodes =
+          nodes.filter((node) => nodesMap?.[node.data.type as BlockEnum]?.metaData.isStart) || []
+      }
+
+      if (!startNodes.length) startNodes = getRootNodesById(id || '')
+
+      return startNodes
+    },
+    [nodesMap, getRootNodesById],
+  )
+
+  const isValidConnection = useCallback(
+    ({ source, sourceHandle: _sourceHandle, target }: Connection) => {
+      const { nodes, edges } = collaborativeWorkflow.getState()
+      const sourceNode: Node = nodes.find((node) => node.id === source)!
+      const targetNode: Node = nodes.find((node) => node.id === target)!
+
+      if (sourceNode.type === CUSTOM_NOTE_NODE || targetNode.type === CUSTOM_NOTE_NODE) return false
+
+      if (sourceNode.parentId !== targetNode.parentId) return false
+
+      if (sourceNode && targetNode) {
+        const sourceNodeCatalogType = getNodeCatalogType(sourceNode.data)
+        const targetNodeCatalogType = getNodeCatalogType(targetNode.data)
+        const sourceNodeAvailableNextNodes = getAvailableBlocks(
+          sourceNodeCatalogType,
+          !!sourceNode.parentId,
+        ).availableNextBlocks
+        const targetNodeAvailablePrevNodes = getAvailableBlocks(
+          targetNodeCatalogType,
+          !!targetNode.parentId,
+        ).availablePrevBlocks
+
+        if (!includesConnectionBlock(sourceNodeAvailableNextNodes, targetNodeCatalogType))
+          return false
+
+        if (!includesConnectionBlock(targetNodeAvailablePrevNodes, sourceNodeCatalogType))
+          return false
+      }
+
+      const hasCycle = (node: Node, visited = new Set()) => {
+        if (visited.has(node.id)) return false
+
+        visited.add(node.id)
+
+        for (const outgoer of getOutgoers(node, nodes, edges)) {
+          if (outgoer.id === source) return true
+          if (hasCycle(outgoer, visited)) return true
+        }
+      }
+
+      return !hasCycle(targetNode)
+    },
+    [collaborativeWorkflow, getAvailableBlocks],
+  )
+
+  const getNode = useCallback(
+    (nodeId?: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+
+      return nodes.find((node) => node.id === nodeId) || getWorkflowEntryNode(nodes)
+    },
+    [collaborativeWorkflow],
+  )
 
   return {
-    handleLayout,
+    getNodeById,
     getTreeLeafNodes,
     getBeforeNodesInSameBranch,
+    getBeforeNodesInSameBranchIncludeParent,
     getAfterNodesInSameBranch,
     handleOutVarRenameChange,
     isVarUsedInNodes,
     removeUsedVarInNodes,
     isNodeVarsUsedInNodes,
     isValidConnection,
-    formatTimeFromNow,
-    renderTreeFromRecord,
-    getNode,
     getBeforeNodeById,
-    enableShortcuts,
-    disableShortcuts,
-  }
-}
-
-export const useFetchToolsData = () => {
-  const workflowStore = useWorkflowStore()
-
-  const handleFetchAllTools = useCallback(async (type: string) => {
-    if (type === 'builtin') {
-      const buildInTools = await fetchAllBuiltInTools()
-
-      workflowStore.setState({
-        buildInTools: buildInTools || [],
-      })
-    }
-    if (type === 'custom') {
-      const customTools = await fetchAllCustomTools()
-
-      workflowStore.setState({
-        customTools: customTools || [],
-      })
-    }
-  }, [workflowStore])
-
-  return {
-    handleFetchAllTools,
-  }
-}
-
-export const useWorkflowInit = () => {
-  const workflowStore = useWorkflowStore()
-  const {
-    nodes: nodesTemplate,
-    edges: edgesTemplate,
-  } = useWorkflowTemplate()
-  const { handleFetchAllTools } = useFetchToolsData()
-  const appDetail = useAppStore(state => state.appDetail)!
-  const [data, setData] = useState<FetchWorkflowDraftResponse>()
-  const [isLoading, setIsLoading] = useState(true)
-  workflowStore.setState({ appId: appDetail.id })
-
-  const handleGetInitialWorkflowData = useCallback(async () => {
-    try {
-      const res = await fetchWorkflowDraft(`/apps/${appDetail.id}/workflows/draft`)
-
-      setData(res)
-      setIsLoading(false)
-    }
-    catch (error: any) {
-      if (error && error.json && !error.bodyUsed && appDetail) {
-        error.json().then((err: any) => {
-          if (err.code === 'draft_workflow_not_exist') {
-            workflowStore.setState({ notInitialWorkflow: true })
-            syncWorkflowDraft({
-              url: `/apps/${appDetail.id}/workflows/draft`,
-              params: {
-                graph: {
-                  nodes: nodesTemplate,
-                  edges: edgesTemplate,
-                },
-                features: {},
-              },
-            }).then((res) => {
-              workflowStore.getState().setDraftUpdatedAt(res.updated_at)
-              handleGetInitialWorkflowData()
-            })
-          }
-        })
-      }
-    }
-  }, [appDetail, nodesTemplate, edgesTemplate, workflowStore])
-
-  useEffect(() => {
-    handleGetInitialWorkflowData()
-  }, [])
-
-  const handleFetchPreloadData = useCallback(async () => {
-    try {
-      const nodesDefaultConfigsData = await fetchNodesDefaultConfigs(`/apps/${appDetail?.id}/workflows/default-workflow-block-configs`)
-      const publishedWorkflow = await fetchPublishedWorkflow(`/apps/${appDetail?.id}/workflows/publish`)
-      workflowStore.setState({
-        nodesDefaultConfigs: nodesDefaultConfigsData.reduce((acc, block) => {
-          if (!acc[block.type])
-            acc[block.type] = { ...block.config }
-          return acc
-        }, {} as Record<string, any>),
-      })
-      workflowStore.getState().setPublishedAt(publishedWorkflow?.created_at)
-    }
-    catch (e) {
-
-    }
-  }, [workflowStore, appDetail])
-
-  useEffect(() => {
-    handleFetchPreloadData()
-    handleFetchAllTools('builtin')
-    handleFetchAllTools('custom')
-  }, [handleFetchPreloadData, handleFetchAllTools])
-
-  useEffect(() => {
-    if (data)
-      workflowStore.getState().setDraftUpdatedAt(data.updated_at)
-  }, [data, workflowStore])
-
-  return {
-    data,
-    isLoading,
+    getIterationNodeChildren,
+    getLoopNodeChildren,
+    getRootNodesById,
+    getStartNodes,
+    isFromStartNode,
+    getNode,
   }
 }
 
 export const useWorkflowReadOnly = () => {
   const workflowStore = useWorkflowStore()
-  const workflowRunningData = useStore(s => s.workflowRunningData)
+  const workflowRunningData = useStore((s) => s.workflowRunningData)
+  const canvasReadOnly = useStore((s) => s.canvasReadOnly)
 
   const getWorkflowReadOnly = useCallback(() => {
-    return workflowStore.getState().workflowRunningData?.result.status === WorkflowRunningStatus.Running
+    const { canvasReadOnly, workflowRunningData } = workflowStore.getState()
+
+    return canvasReadOnly || workflowRunningData?.result.status === WorkflowRunningStatus.Running
   }, [workflowStore])
 
   return {
-    workflowReadOnly: workflowRunningData?.result.status === WorkflowRunningStatus.Running,
+    workflowReadOnly:
+      canvasReadOnly || workflowRunningData?.result.status === WorkflowRunningStatus.Running,
     getWorkflowReadOnly,
   }
 }
-export const useNodesReadOnly = () => {
+
+const useNodesReadOnlyBase = (canEdit: boolean) => {
   const workflowStore = useWorkflowStore()
-  const workflowRunningData = useStore(s => s.workflowRunningData)
-  const historyWorkflowData = useStore(s => s.historyWorkflowData)
-  const isRestoring = useStore(s => s.isRestoring)
+  const canvasReadOnly = useStore((s) => s.canvasReadOnly)
+  const workflowRunningData = useStore((s) => s.workflowRunningData)
+  const historyWorkflowData = useStore((s) => s.historyWorkflowData)
+  const isRestoring = useStore((s) => s.isRestoring)
 
-  const getNodesReadOnly = useCallback(() => {
-    const {
-      workflowRunningData,
-      historyWorkflowData,
-      isRestoring,
-    } = workflowStore.getState()
+  const getNodesReadOnly = useCallback((): boolean => {
+    const { workflowRunningData, historyWorkflowData, isRestoring, canvasReadOnly } =
+      workflowStore.getState()
 
-    return workflowRunningData || historyWorkflowData || isRestoring
-  }, [workflowStore])
+    return !!(
+      canvasReadOnly ||
+      !canEdit ||
+      workflowRunningData?.result.status === WorkflowRunningStatus.Running ||
+      workflowRunningData?.result.status === WorkflowRunningStatus.Paused ||
+      historyWorkflowData ||
+      isRestoring
+    )
+  }, [workflowStore, canEdit])
 
   return {
-    nodesReadOnly: !!(workflowRunningData || historyWorkflowData || isRestoring),
+    nodesReadOnly: !!(
+      canvasReadOnly ||
+      !canEdit ||
+      workflowRunningData?.result.status === WorkflowRunningStatus.Running ||
+      workflowRunningData?.result.status === WorkflowRunningStatus.Paused ||
+      historyWorkflowData ||
+      isRestoring
+    ),
     getNodesReadOnly,
   }
 }
 
-export const useToolIcon = (data: Node['data']) => {
-  const buildInTools = useStore(s => s.buildInTools)
-  const customTools = useStore(s => s.customTools)
-  const toolIcon = useMemo(() => {
-    if (data.type === BlockEnum.Tool) {
-      if (data.provider_type === 'builtin')
-        return buildInTools.find(toolWithProvider => toolWithProvider.id === data.provider_id)?.icon
+export const useNodesReadOnlyByCanEdit = (canEdit: boolean) => {
+  return useNodesReadOnlyBase(canEdit)
+}
 
-      return customTools.find(toolWithProvider => toolWithProvider.id === data.provider_id)?.icon
-    }
-  }, [data, buildInTools, customTools])
+export const useNodesReadOnly = () => {
+  const canEdit = useHooksStore((s) => s.accessControl.canEdit)
 
-  return toolIcon
+  return useNodesReadOnlyBase(canEdit)
+}
+
+export const useIsNodeInIteration = (iterationId: string) => {
+  const collaborativeWorkflow = useCollaborativeWorkflow()
+
+  const isNodeInIteration = useCallback(
+    (nodeId: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+      const node = nodes.find((node) => node.id === nodeId)
+
+      if (!node) return false
+
+      if (node.parentId === iterationId) return true
+
+      return false
+    },
+    [iterationId, collaborativeWorkflow],
+  )
+  return {
+    isNodeInIteration,
+  }
+}
+
+export const useIsNodeInLoop = (loopId: string) => {
+  const collaborativeWorkflow = useCollaborativeWorkflow()
+
+  const isNodeInLoop = useCallback(
+    (nodeId: string) => {
+      const { nodes } = collaborativeWorkflow.getState()
+      const node = nodes.find((node) => node.id === nodeId)
+
+      if (!node) return false
+
+      if (node.parentId === loopId) return true
+
+      return false
+    },
+    [loopId, collaborativeWorkflow],
+  )
+  return {
+    isNodeInLoop,
+  }
 }

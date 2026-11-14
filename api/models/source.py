@@ -1,21 +1,91 @@
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+import json
+from datetime import datetime
+from typing import Any, TypedDict
+from uuid import uuid4
 
-from extensions.ext_database import db
+import sqlalchemy as sa
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .base import TypeBase
+from .types import AdjustedJSON, LongText, StringUUID, adjusted_json_index
 
 
-class DataSourceBinding(db.Model):
-    __tablename__ = 'data_source_bindings'
+class DataSourceOauthBinding(TypeBase):
+    __tablename__ = "data_source_oauth_bindings"
     __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='source_binding_pkey'),
-        db.Index('source_binding_tenant_id_idx', 'tenant_id'),
-        db.Index('source_info_idx', "source_info", postgresql_using='gin')
+        sa.PrimaryKeyConstraint("id", name="source_binding_pkey"),
+        sa.Index("source_binding_tenant_id_idx", "tenant_id"),
+        adjusted_json_index("source_info_idx", "source_info"),
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    tenant_id = db.Column(UUID, nullable=False)
-    access_token = db.Column(db.String(255), nullable=False)
-    provider = db.Column(db.String(255), nullable=False)
-    source_info = db.Column(JSONB, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    disabled = db.Column(db.Boolean, nullable=True, server_default=db.text('false'))
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    access_token: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_info: Mapped[dict[str, Any]] = mapped_column(AdjustedJSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        init=False,
+    )
+    disabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=True, default=False)
+
+
+class DataSourceApiKeyAuthBindingDict(TypedDict):
+    id: str
+    tenant_id: str
+    category: str
+    provider: str
+    credentials: Any
+    created_at: float
+    updated_at: float
+    disabled: bool
+
+
+class DataSourceApiKeyAuthBinding(TypeBase):
+    __tablename__ = "data_source_api_key_auth_bindings"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="data_source_api_key_auth_binding_pkey"),
+        sa.Index("data_source_api_key_auth_binding_tenant_id_idx", "tenant_id"),
+        sa.Index("data_source_api_key_auth_binding_provider_idx", "provider"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    category: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider: Mapped[str] = mapped_column(String(255), nullable=False)
+    credentials: Mapped[str | None] = mapped_column(LongText, nullable=True, default=None)  # JSON
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        onupdate=func.current_timestamp(),
+        init=False,
+    )
+    disabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=True, default=False)
+
+    def to_dict(self) -> DataSourceApiKeyAuthBindingDict:
+        result: DataSourceApiKeyAuthBindingDict = {
+            "id": self.id,
+            "tenant_id": self.tenant_id,
+            "category": self.category,
+            "provider": self.provider,
+            "credentials": json.loads(self.credentials) if self.credentials else None,
+            "created_at": self.created_at.timestamp(),
+            "updated_at": self.updated_at.timestamp(),
+            "disabled": self.disabled,
+        }
+        return result

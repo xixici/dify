@@ -1,32 +1,24 @@
-# Description
+> [!IMPORTANT]
+>
+> 1. Make sure you have read our [contribution guidelines](https://github.com/langgenius/dify/blob/main/CONTRIBUTING.md)
+> 1. Ensure there is an associated issue
+> 1. Use the correct syntax to link this PR: `Fixes #<issue number>`.
 
-Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change.
+## Summary
 
-Fixes # (issue)
+<!-- Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context. List any dependencies that are required for this change. -->
+<!-- If this PR was created by an automated agent, add `From <Tool Name>` as the final line of the description. Example: `From Codex`. -->
 
-## Type of Change
+## Screenshots
 
-Please delete options that are not relevant.
+| Before | After |
+| ------ | ----- |
+| ...    | ...   |
 
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+## Checklist
+
 - [ ] This change requires a documentation update, included: [Dify Document](https://github.com/langgenius/dify-docs)
-- [ ] Improvement, including but not limited to code refactoring, performance optimization, and UI/UX improvement
-- [ ] Dependency upgrade
-
-# How Has This Been Tested?
-
-Please describe the tests that you ran to verify your changes. Provide instructions so we can reproduce. Please also list any relevant details for your test configuration
-
-- [ ] TODO
-
-# Suggested Checklist:
-
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] My changes generate no new warnings
-- [ ] I ran `dev/reformat`(backend) and `cd web && npx lint-staged`(frontend) to appease the lint gods
-- [ ] `optional` I have made corresponding changes to the documentation 
-- [ ] `optional` I have added tests that prove my fix is effective or that my feature works
-- [ ] `optional` New and existing unit tests pass locally with my changes
+- [ ] I understand that this PR may be closed in case there was no previous discussion or issues. (This doesn't apply to typos!)
+- [ ] I've verified the change and added or updated tests where meaningful regression risk justifies coverage.
+- [ ] I've updated the documentation accordingly.
+- [ ] I ran `make lint && make type-check` (backend) and `vp staged` (frontend) to appease the lint gods

@@ -1,68 +1,43 @@
-from typing import Optional
+from collections.abc import Mapping
+from typing import Any
 
-from core.app.app_config.entities import FileExtraConfig
+from constants import DEFAULT_FILE_NUMBER_LIMITS
+from graphon.file import FileUploadConfig
 
 
 class FileUploadConfigManager:
     @classmethod
-    def convert(cls, config: dict, is_vision: bool = True) -> Optional[FileExtraConfig]:
+    def convert(cls, config: Mapping[str, Any], is_vision: bool = True):
         """
         Convert model config to model config
 
         :param config: model config args
         :param is_vision: if True, the feature is vision feature
         """
-        file_upload_dict = config.get('file_upload')
+        file_upload_dict = config.get("file_upload")
         if file_upload_dict:
-            if 'image' in file_upload_dict and file_upload_dict['image']:
-                if 'enabled' in file_upload_dict['image'] and file_upload_dict['image']['enabled']:
-                    image_config = {
-                        'number_limits': file_upload_dict['image']['number_limits'],
-                        'transfer_methods': file_upload_dict['image']['transfer_methods']
-                    }
+            if file_upload_dict.get("enabled"):
+                transform_methods = file_upload_dict.get("allowed_file_upload_methods", [])
+                file_upload_dict["image_config"] = {
+                    "number_limits": file_upload_dict.get("number_limits", DEFAULT_FILE_NUMBER_LIMITS),
+                    "transfer_methods": transform_methods,
+                }
 
-                    if is_vision:
-                        image_config['detail'] = file_upload_dict['image']['detail']
+                if is_vision:
+                    file_upload_dict["image_config"]["detail"] = file_upload_dict.get("image", {}).get("detail", "high")
 
-                    return FileExtraConfig(
-                        image_config=image_config
-                    )
-
-        return None
+                return FileUploadConfig.model_validate(file_upload_dict)
 
     @classmethod
-    def validate_and_set_defaults(cls, config: dict, is_vision: bool = True) -> tuple[dict, list[str]]:
+    def validate_and_set_defaults(cls, config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         """
         Validate and set defaults for file upload feature
 
         :param config: app model config args
-        :param is_vision: if True, the feature is vision feature
         """
         if not config.get("file_upload"):
             config["file_upload"] = {}
-
-        if not isinstance(config["file_upload"], dict):
-            raise ValueError("file_upload must be of dict type")
-
-        # check image config
-        if not config["file_upload"].get("image"):
-            config["file_upload"]["image"] = {"enabled": False}
-
-        if config['file_upload']['image']['enabled']:
-            number_limits = config['file_upload']['image']['number_limits']
-            if number_limits < 1 or number_limits > 6:
-                raise ValueError("number_limits must be in [1, 6]")
-
-            if is_vision:
-                detail = config['file_upload']['image']['detail']
-                if detail not in ['high', 'low']:
-                    raise ValueError("detail must be in ['high', 'low']")
-
-            transfer_methods = config['file_upload']['image']['transfer_methods']
-            if not isinstance(transfer_methods, list):
-                raise ValueError("transfer_methods must be of list type")
-            for method in transfer_methods:
-                if method not in ['remote_url', 'local_file']:
-                    raise ValueError("transfer_methods must be in ['remote_url', 'local_file']")
+        else:
+            FileUploadConfig.model_validate(config["file_upload"])
 
         return config, ["file_upload"]

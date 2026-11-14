@@ -1,86 +1,77 @@
 'use client'
-import type { FC } from 'react'
-import React, { useEffect, useRef, useState } from 'react'
-import cn from 'classnames'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '@langgenius/dify-ui/menu'
+import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { useBoolean } from 'ahooks'
-import { Edit03, Pin02, Trash03 } from '../../base/icons/src/vender/line/general'
-
 import s from './style.module.css'
-import { PortalToFollowElem, PortalToFollowElemContent, PortalToFollowElemTrigger } from '@/app/components/base/portal-to-follow-elem'
 
-export type IItemOperationProps = {
+type IItemOperationProps = {
   className?: string
-  isItemHovering?: boolean
+  itemName: string
   isPinned: boolean
   isShowRenameConversation?: boolean
   onRenameConversation?: () => void
-  isShowDelete: boolean
   togglePin: () => void
-  onDelete: () => void
 }
 
-const ItemOperation: FC<IItemOperationProps> = ({
+function ItemOperation({
   className,
-  isItemHovering,
+  itemName,
   isPinned,
   togglePin,
   isShowRenameConversation,
   onRenameConversation,
-  isShowDelete,
-  onDelete,
-}) => {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
-  const [isHovering, { setTrue: setIsHovering, setFalse: setNotHovering }] = useBoolean(false)
-  useEffect(() => {
-    if (!isItemHovering && !isHovering)
-      setOpen(false)
-  }, [isItemHovering, isHovering])
+}: IItemOperationProps) {
+  const { t } = useTranslation(['explore'])
+  const { t: tCommon } = useTranslation(['common'])
+
   return (
-    <PortalToFollowElem
-      open={open}
-      onOpenChange={setOpen}
-      placement='bottom-end'
-      offset={4}
-    >
-      <PortalToFollowElemTrigger
-        onClick={() => setOpen(v => !v)}
+    <Menu modal={false}>
+      <MenuTrigger
+        aria-label={tCommon(($) => $['operation.moreActionsFor'], { name: itemName })}
+        className={cn(
+          'group/operation flex size-6 items-center justify-center rounded-md border-none p-0 text-text-tertiary transition-colors group-focus-within:bg-components-actionbar-bg! group-hover:bg-components-actionbar-bg! hover:bg-state-base-hover focus-visible:bg-state-base-hover data-popup-open:bg-components-actionbar-bg! data-popup-open:shadow-none!',
+          className,
+        )}
+        onClick={(e) => {
+          e.stopPropagation()
+        }}
       >
-        <div className={cn(className, s.btn, 'h-6 w-6 rounded-md border-none py-1', (isItemHovering || open) && `${s.open} !bg-gray-100 !shadow-none`)}></div>
-      </PortalToFollowElemTrigger>
-      <PortalToFollowElemContent
-        className="z-50"
-      >
-        <div
-          ref={ref}
-          className={'min-w-[120px] p-1 bg-white rounded-lg border border--gray-200 shadow-lg'}
-          onMouseEnter={setIsHovering}
-          onMouseLeave={setNotHovering}
+        <span
+          aria-hidden
+          className="i-ri-more-fill size-4 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 group-focus-visible/operation:opacity-100 group-data-popup-open/operation:opacity-100"
+        />
+      </MenuTrigger>
+      <MenuContent align="end" className="min-w-30">
+        <MenuItem
+          className={cn(s.actionItem, 'gap-2 px-3')}
           onClick={(e) => {
             e.stopPropagation()
+            togglePin()
           }}
         >
-          <div className={cn(s.actionItem, 'hover:bg-gray-50 group')} onClick={togglePin}>
-            <Pin02 className='shrink-0 w-4 h-4 text-gray-500'/>
-            <span className={s.actionName}>{isPinned ? t('explore.sidebar.action.unpin') : t('explore.sidebar.action.pin')}</span>
-          </div>
-          {isShowRenameConversation && (
-            <div className={cn(s.actionItem, 'hover:bg-gray-50 group')} onClick={onRenameConversation}>
-              <Edit03 className='shrink-0 w-4 h-4 text-gray-500'/>
-              <span className={s.actionName}>{t('explore.sidebar.action.rename')}</span>
-            </div>
-          )}
-          {isShowDelete && (
-            <div className={cn(s.actionItem, s.deleteActionItem, 'hover:bg-gray-50 group')} onClick={onDelete} >
-              <Trash03 className={cn(s.deleteActionItemChild, 'shrink-0 w-4 h-4 stroke-current text-gray-500 stroke-2')} />
-              <span className={cn(s.actionName, s.deleteActionItemChild)}>{t('explore.sidebar.action.delete')}</span>
-            </div>
-          )}
-        </div>
-      </PortalToFollowElemContent>
-    </PortalToFollowElem>
+          <span
+            aria-hidden
+            className="i-custom-vender-line-general-pin-02 size-4 shrink-0 text-text-secondary"
+          />
+          <span className={s.actionName}>
+            {isPinned ? t(($) => $['sidebar.action.unpin']) : t(($) => $['sidebar.action.pin'])}
+          </span>
+        </MenuItem>
+        {isShowRenameConversation && (
+          <MenuItem
+            className={cn(s.actionItem, 'gap-2 px-3')}
+            onClick={(e) => {
+              e.stopPropagation()
+              onRenameConversation?.()
+            }}
+          >
+            <span aria-hidden className="i-ri-edit-line size-4 shrink-0 text-text-secondary" />
+            <span className={s.actionName}>{t(($) => $['sidebar.action.rename'])}</span>
+          </MenuItem>
+        )}
+      </MenuContent>
+    </Menu>
   )
 }
 export default React.memo(ItemOperation)

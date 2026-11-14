@@ -1,31 +1,40 @@
 'use client'
-import type { FC } from 'react'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import cn from 'classnames'
-import copy from 'copy-to-clipboard'
-import { useTranslation } from 'react-i18next'
+
+import type { FC, ReactNode } from 'react'
+import type { ModelConfig, Node, NodeOutPutVar, Variable } from '../../../../types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { Popover, PopoverContent, PopoverTrigger } from '@langgenius/dify-ui/popover'
+import { Switch } from '@langgenius/dify-ui/switch'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
+import { RiDeleteBinLine } from '@remixicon/react'
 import { useBoolean } from 'ahooks'
-import {
-  BlockEnum,
-  type Node,
-  type NodeOutPutVar,
-} from '../../../../types'
+import copy from 'copy-to-clipboard'
+import { useAtomValue } from 'jotai'
+import * as React from 'react'
+import { useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import PromptEditor from '@/app/components/base/prompt-editor'
+import { PROMPT_EDITOR_INSERT_QUICKLY } from '@/app/components/base/prompt-editor/plugins/update-block'
+import { editorResourceKindAtom } from '@/app/components/workflow/editor-resource/state'
+import CodeEditor from '@/app/components/workflow/nodes/_base/components/editor/code-editor/editor-support-vars'
 import ToggleExpandBtn from '@/app/components/workflow/nodes/_base/components/toggle-expand-btn'
 import useToggleExpend from '@/app/components/workflow/nodes/_base/hooks/use-toggle-expend'
-import PromptEditor from '@/app/components/base/prompt-editor'
-import { Clipboard, ClipboardCheck } from '@/app/components/base/icons/src/vender/line/files'
-import s from '@/app/components/app/configuration/config-prompt/style.module.css'
-import { Trash03 } from '@/app/components/base/icons/src/vender/line/general'
+import { useStore } from '@/app/components/workflow/store'
 import { useEventEmitterContextContext } from '@/context/event-emitter'
-import { PROMPT_EDITOR_INSERT_QUICKLY } from '@/app/components/base/prompt-editor/plugins/update-block'
-import { Variable02 } from '@/app/components/base/icons/src/vender/solid/development'
-import TooltipPlus from '@/app/components/base/tooltip-plus'
+import { useWorkflowVariableType } from '../../../../hooks/use-workflow-variables'
+import { BlockEnum, EditionType } from '../../../../types'
+import { CodeLanguage } from '../../../code/types'
+import PromptGeneratorBtn from '../../../llm/components/prompt-generator-btn'
+import Wrap from '../editor/wrap'
 
-type Props = {
+type Props = Readonly<{
   className?: string
   headerClassName?: string
   instanceId?: string
-  title: string | JSX.Element
+  nodeId?: string
+  editorId?: string
+  title: string | React.JSX.Element
   value: string
   onChange: (value: string) => void
   readOnly?: boolean
@@ -42,12 +51,33 @@ type Props = {
   }
   nodesOutputVars?: NodeOutPutVar[]
   availableNodes?: Node[]
-}
+  isSupportFileVar?: boolean
+  isSupportPromptGenerator?: boolean
+  onGenerated?: (prompt: string) => void
+  modelConfig?: ModelConfig
+  // for jinja
+  isSupportJinja?: boolean
+  editionType?: EditionType
+  onEditionTypeChange?: (editionType: EditionType) => void
+  varList?: Variable[]
+  handleAddVariable?: (payload: Variable) => void
+  containerBackgroundClassName?: string
+  gradientBorder?: boolean
+  titleTooltip?: ReactNode
+  inputClassName?: string
+  editorContainerClassName?: string
+  placeholder?: string
+  placeholderClassName?: string
+  titleClassName?: string
+  required?: boolean
+}>
 
 const Editor: FC<Props> = ({
   className,
   headerClassName,
   instanceId,
+  nodeId,
+  editorId,
   title,
   value,
   onChange,
@@ -61,141 +91,325 @@ const Editor: FC<Props> = ({
   hasSetBlockStatus,
   nodesOutputVars,
   availableNodes = [],
+  isSupportFileVar,
+  isSupportPromptGenerator,
+  isSupportJinja,
+  editionType,
+  onEditionTypeChange,
+  varList = [],
+  handleAddVariable,
+  onGenerated,
+  modelConfig,
+  containerBackgroundClassName: containerClassName,
+  gradientBorder = true,
+  titleTooltip,
+  inputClassName,
+  placeholder,
+  placeholderClassName,
+  titleClassName,
+  editorContainerClassName,
+  required,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'workflow'])
   const { eventEmitter } = useEventEmitterContextContext()
+  const controlPromptEditorRerenderKey = useStore((s) => s.controlPromptEditorRerenderKey)
 
   const isShowHistory = !isChatModel && isChatApp
 
   const ref = useRef<HTMLDivElement>(null)
-  const {
-    wrapClassName,
-    wrapStyle,
-    isExpand,
-    setIsExpand,
-    editorExpandHeight,
-  } = useToggleExpend({ ref, isInNode: true })
+  const { wrapClassName, wrapStyle, isExpand, setIsExpand, editorExpandHeight } = useToggleExpend({
+    ref,
+    isInNode: true,
+  })
   const [isCopied, setIsCopied] = React.useState(false)
   const handleCopy = useCallback(() => {
     copy(value)
     setIsCopied(true)
   }, [value])
 
-  const [isFocus, {
-    setTrue: setFocus,
-    setFalse: setBlur,
-  }] = useBoolean(false)
-  const hideTooltipRunId = useRef(0)
-
-  const [isShowInsertToolTip, setIsShowInsertTooltip] = useState(false)
-  useEffect(() => {
-    if (isFocus) {
-      clearTimeout(hideTooltipRunId.current)
-      setIsShowInsertTooltip(true)
-    }
-    else {
-      hideTooltipRunId.current = setTimeout(() => {
-        setIsShowInsertTooltip(false)
-      }, 100) as any
-    }
-  }, [isFocus])
+  const [isFocus, { setTrue: setFocus, setFalse: setBlur }] = useBoolean(false)
 
   const handleInsertVariable = () => {
     setFocus()
-    eventEmitter?.emit({ type: PROMPT_EDITOR_INSERT_QUICKLY, instanceId } as any)
+    eventEmitter?.emit({ type: PROMPT_EDITOR_INSERT_QUICKLY, instanceId })
   }
 
+  const getVarType = useWorkflowVariableType()
+  const resourceKind = useAtomValue(editorResourceKindAtom)
+  const setShowInputFieldPanel = useStore((s) => s.setShowInputFieldPanel)
+
   return (
-    <div className={cn(className, wrapClassName)} style={wrapStyle}>
-      <div ref={ref} className={cn(isFocus ? s.gradientBorder : 'bg-gray-100', isExpand && 'h-full', '!rounded-[9px] p-0.5')}>
-        <div className={cn(isFocus ? 'bg-gray-50' : 'bg-gray-100', isExpand && 'h-full flex flex-col', 'rounded-lg')}>
-          <div className={cn(headerClassName, 'pt-1 pl-3 pr-2 flex justify-between h-6 items-center')}>
-            <div className='leading-4 text-xs font-semibold text-gray-700 uppercase'>{title}</div>
-            <div className='flex items-center'>
-              <div className='leading-[18px] text-xs font-medium text-gray-500'>{value?.length || 0}</div>
-              <div className='w-px h-3 ml-2 mr-2 bg-gray-200'></div>
+    <Wrap className={cn(className, wrapClassName)} style={wrapStyle} isInNode isExpand={isExpand}>
+      <div
+        ref={ref}
+        className={cn(
+          isFocus
+            ? gradientBorder &&
+                'bg-linear-to-r from-components-input-border-active-prompt-1 to-components-input-border-active-prompt-2'
+            : 'bg-transparent',
+          isExpand && 'h-full',
+          'rounded-[9px]! p-0.5',
+          containerClassName,
+        )}
+      >
+        <div
+          className={cn(
+            isFocus ? 'bg-background-default' : 'bg-components-input-bg-normal',
+            isExpand && 'flex h-full flex-col',
+            'rounded-lg',
+            containerClassName,
+          )}
+        >
+          <div className={cn('flex items-center justify-between pt-1 pr-2 pl-3', headerClassName)}>
+            <div className="flex gap-2">
+              <div
+                className={cn(
+                  'text-xs/4 font-semibold text-text-secondary uppercase',
+                  titleClassName,
+                )}
+              >
+                {title} {required && <span className="text-text-destructive">*</span>}
+              </div>
+              {!!titleTooltip && (
+                <Popover>
+                  <PopoverTrigger
+                    openOnHover
+                    aria-label={
+                      typeof titleTooltip === 'string'
+                        ? titleTooltip
+                        : typeof title === 'string'
+                          ? title
+                          : 'Help'
+                    }
+                    render={
+                      <button
+                        type="button"
+                        className="flex size-4 shrink-0 items-center justify-center rounded-sm p-px hover:bg-state-base-hover"
+                      >
+                        <span
+                          aria-hidden
+                          className="i-ri-question-line size-3.5 text-text-quaternary hover:text-text-tertiary"
+                        />
+                      </button>
+                    }
+                  />
+                  <PopoverContent className="max-w-75 px-3 py-2 system-xs-regular text-text-tertiary">
+                    {titleTooltip}
+                  </PopoverContent>
+                </Popover>
+              )}
+            </div>
+            <div className="flex items-center">
+              <div className="text-xs leading-4.5 font-medium text-text-tertiary">
+                {value?.length || 0}
+              </div>
+              {isSupportPromptGenerator && (
+                <PromptGeneratorBtn
+                  nodeId={nodeId!}
+                  editorId={editorId}
+                  className="ml-1.25"
+                  onGenerated={onGenerated}
+                  modelConfig={modelConfig}
+                  currentPrompt={value}
+                />
+              )}
+
+              <div className="mx-2 h-3 w-px bg-divider-regular"></div>
               {/* Operations */}
-              <div className='flex items-center space-x-2'>
-                {!readOnly && (
-                  <TooltipPlus
-                    popupContent={`${t('workflow.common.insertVarTip')}`}
+              <div className="flex items-center space-x-0.5">
+                {isSupportJinja && (
+                  <div
+                    className={cn(
+                      editionType === EditionType.jinja2 &&
+                        'border-components-button-ghost-bg-hover bg-components-button-ghost-bg-hover',
+                      'flex h-5.5 items-center space-x-0.5 rounded-[5px] border border-transparent px-1.5 hover:border-components-button-ghost-bg-hover',
+                    )}
                   >
-                    <Variable02 className='w-3.5 h-3.5 text-gray-500 cursor-pointer' onClick={handleInsertVariable} />
-                  </TooltipPlus>
+                    <Popover>
+                      <PopoverTrigger
+                        openOnHover
+                        aria-label={t(($) => $['common.enableJinja'], { ns: 'workflow' })}
+                        render={
+                          <button
+                            type="button"
+                            className="flex h-4 w-7 items-center justify-center rounded-sm hover:bg-state-base-hover"
+                          >
+                            <span
+                              aria-hidden
+                              className="i-custom-vender-workflow-jinja h-3 w-6 text-text-quaternary"
+                            />
+                          </button>
+                        }
+                      />
+                      <PopoverContent className="px-3 py-2 system-xs-regular text-text-tertiary">
+                        <div>
+                          <div>{t(($) => $['common.enableJinja'], { ns: 'workflow' })}</div>
+                          <a
+                            className="text-text-accent hover:underline"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            href="https://jinja.palletsprojects.com/en/2.10.x/"
+                          >
+                            {t(($) => $['common.learnMore'], { ns: 'workflow' })}
+                          </a>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <Switch
+                      size="sm"
+                      checked={editionType === EditionType.jinja2}
+                      onCheckedChange={(checked) => {
+                        onEditionTypeChange?.(checked ? EditionType.jinja2 : EditionType.basic)
+                      }}
+                    />
+                  </div>
+                )}
+                {!readOnly && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <IconButton
+                          aria-label={t(($) => $['common.insertVarTip'], { ns: 'workflow' })}
+                          onClick={handleInsertVariable}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="i-custom-vender-solid-development-variable-02 size-4"
+                          />
+                        </IconButton>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $['common.insertVarTip'], { ns: 'workflow' })}
+                    </TooltipContent>
+                  </Tooltip>
                 )}
                 {showRemove && (
-                  <Trash03 className='w-3.5 h-3.5 text-gray-500 cursor-pointer' onClick={onRemove} />
+                  <IconButton
+                    aria-label={t(($) => $['operation.remove'], { ns: 'common' })}
+                    onClick={onRemove}
+                  >
+                    <RiDeleteBinLine aria-hidden="true" className="size-4" />
+                  </IconButton>
                 )}
-                {!isCopied
-                  ? (
-                    <Clipboard className='w-3.5 h-3.5 text-gray-500 cursor-pointer' onClick={handleCopy} />
-                  )
-                  : (
-                    <ClipboardCheck className='mx-1 w-3.5 h-3.5 text-gray-500' />
-                  )
-                }
+                {!isCopied ? (
+                  <IconButton
+                    aria-label={t(($) => $['operation.copy'], { ns: 'common' })}
+                    onClick={handleCopy}
+                  >
+                    <span aria-hidden="true" className="i-custom-vender-line-files-copy size-4" />
+                  </IconButton>
+                ) : (
+                  <IconButton aria-label={t(($) => $['operation.copy'], { ns: 'common' })}>
+                    <span
+                      aria-hidden="true"
+                      className="i-custom-vender-line-files-copy-check size-4"
+                    />
+                  </IconButton>
+                )}
                 <ToggleExpandBtn isExpand={isExpand} onExpandChange={setIsExpand} />
               </div>
-
             </div>
           </div>
 
           {/* Min: 80 Max: 560. Header: 24 */}
-          <div className={cn('pb-2', isExpand && 'flex flex-col grow')}>
-            <div className={cn(isExpand ? 'grow' : 'max-h-[536px]', 'relative px-3 min-h-[56px]  overflow-y-auto')}>
-              <PromptEditor
-                instanceId={instanceId}
-                compact
-                style={isExpand ? { height: editorExpandHeight - 5 } : {}}
-                value={value}
-                contextBlock={{
-                  show: justVar ? false : isShowContext,
-                  selectable: !hasSetBlockStatus?.context,
-                  canNotAddContext: true,
-                }}
-                historyBlock={{
-                  show: justVar ? false : isShowHistory,
-                  selectable: !hasSetBlockStatus?.history,
-                  history: {
-                    user: 'Human',
-                    assistant: 'Assistant',
-                  },
-                }}
-                queryBlock={{
-                  show: false, // use [sys.query] instead of query block
-                  selectable: false,
-                }}
-                workflowVariableBlock={{
-                  show: true,
-                  variables: nodesOutputVars || [],
-                  workflowNodesMap: availableNodes.reduce((acc, node) => {
-                    acc[node.id] = {
-                      title: node.data.title,
-                      type: node.data.type,
-                    }
-                    if (node.data.type === BlockEnum.Start) {
-                      acc.sys = {
-                        title: t('workflow.blocks.start'),
-                        type: BlockEnum.Start,
+          <div className={cn('pb-2', isExpand && 'flex grow flex-col')}>
+            {!(isSupportJinja && editionType === EditionType.jinja2) ? (
+              <div
+                className={cn(
+                  isExpand ? 'grow' : 'max-h-134',
+                  'relative min-h-14 overflow-y-auto px-3',
+                  editorContainerClassName,
+                )}
+              >
+                <PromptEditor
+                  key={controlPromptEditorRerenderKey}
+                  placeholder={placeholder}
+                  placeholderClassName={placeholderClassName}
+                  instanceId={instanceId}
+                  compact
+                  className={cn('min-h-14', inputClassName)}
+                  style={isExpand ? { height: editorExpandHeight - 5 } : {}}
+                  value={value}
+                  contextBlock={{
+                    show: justVar ? false : isShowContext,
+                    selectable: !hasSetBlockStatus?.context,
+                    canNotAddContext: true,
+                  }}
+                  historyBlock={{
+                    show: justVar ? false : isShowHistory,
+                    selectable: !hasSetBlockStatus?.history,
+                    history: {
+                      user: 'Human',
+                      assistant: 'Assistant',
+                    },
+                  }}
+                  queryBlock={{
+                    show: false, // use [sys.query] instead of query block
+                    selectable: false,
+                  }}
+                  workflowVariableBlock={{
+                    show: true,
+                    variables: nodesOutputVars || [],
+                    getVarType,
+                    workflowNodesMap: availableNodes.reduce((acc, node) => {
+                      acc[node.id] = {
+                        title: node.data.title,
+                        type: node.data.type,
+                        width: node.width,
+                        height: node.height,
+                        position: node.position,
+                        ...(node.data.type === BlockEnum.LLM && {
+                          modelProvider: (node.data as { model?: ModelConfig }).model?.provider,
+                        }),
                       }
-                    }
-                    return acc
-                  }, {} as any),
-                }}
-                onChange={onChange}
-                onBlur={setBlur}
-                onFocus={setFocus}
-                editable={!readOnly}
-              />
-              {/* to patch Editor not support dynamic change editable status */}
-              {readOnly && <div className='absolute inset-0 z-10'></div>}
-            </div>
+                      if (node.data.type === BlockEnum.Start) {
+                        acc.sys = {
+                          title: t(($) => $['blocks.start'], { ns: 'workflow' }),
+                          type: BlockEnum.Start,
+                        }
+                      }
+                      return acc
+                    }, {} as any),
+                    showManageInputField: resourceKind === 'knowledge-pipeline',
+                    onManageInputField: () => setShowInputFieldPanel?.(true),
+                  }}
+                  onChange={onChange}
+                  onBlur={setBlur}
+                  onFocus={setFocus}
+                  editable={!readOnly}
+                  isSupportFileVar={isSupportFileVar}
+                />
+                {/* to patch Editor not support dynamic change editable status */}
+                {readOnly && <div className="absolute inset-0 z-10"></div>}
+              </div>
+            ) : (
+              <div
+                className={cn(
+                  isExpand ? 'grow' : 'max-h-134',
+                  'relative min-h-14 overflow-y-auto px-3',
+                  editorContainerClassName,
+                )}
+              >
+                <CodeEditor
+                  availableVars={nodesOutputVars || []}
+                  varList={varList}
+                  onAddVar={handleAddVariable}
+                  isInNode
+                  readOnly={readOnly}
+                  language={CodeLanguage.python3}
+                  value={value}
+                  onChange={onChange}
+                  noWrapper
+                  isExpand={isExpand}
+                  className={inputClassName}
+                />
+              </div>
+            )}
           </div>
-
         </div>
       </div>
-    </div>
-
+    </Wrap>
   )
 }
 export default React.memo(Editor)

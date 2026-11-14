@@ -1,60 +1,65 @@
 import type { FC } from 'react'
+import type { ChatItem } from '../../types'
+import type { FileEntity } from '@/app/components/base/file-uploader/types'
+import type { FileResponse } from '@/types/workflow'
 import { memo } from 'react'
-import type {
-  ChatItem,
-  VisionFile,
-} from '../../types'
+import Thought from '@/app/components/base/chat/chat/thought'
+import { FileList } from '@/app/components/base/file-uploader'
+import { getProcessedFilesFromResponse } from '@/app/components/base/file-uploader/utils'
 import { Markdown } from '@/app/components/base/markdown'
-import Thought from '@/app/components/app/chat/thought'
-import ImageGallery from '@/app/components/base/image-gallery'
-import type { Emoji } from '@/app/components/tools/types'
 
 type AgentContentProps = {
   item: ChatItem
   responding?: boolean
-  allToolIcons?: Record<string, string | Emoji>
+  content?: string
 }
-const AgentContent: FC<AgentContentProps> = ({
-  item,
-  responding,
-  allToolIcons,
-}) => {
-  const {
-    annotation,
-    agent_thoughts,
-  } = item
+const AgentContent: FC<AgentContentProps> = ({ item, responding, content }) => {
+  const { annotation, agent_thoughts } = item
 
-  const getImgs = (list?: VisionFile[]) => {
-    if (!list)
-      return []
-    return list.filter(file => file.type === 'image' && file.belongs_to === 'assistant')
+  if (annotation?.logAnnotation) {
+    return (
+      <Markdown
+        content={annotation?.logAnnotation.content || ''}
+        data-testid="agent-content-markdown"
+      />
+    )
   }
 
-  if (annotation?.logAnnotation)
-    return <Markdown content={annotation?.logAnnotation.content || ''} />
-
   return (
-    <div>
-      {agent_thoughts?.map((thought, index) => (
-        <div key={index}>
-          {thought.thought && (
-            <Markdown content={thought.thought} />
-          )}
-          {/* {item.tool} */}
-          {/* perhaps not use tool */}
-          {!!thought.tool && (
-            <Thought
-              thought={thought}
-              allToolIcons={allToolIcons || {}}
-              isFinished={!!thought.observation || !responding}
-            />
-          )}
+    <div data-testid="agent-content-container">
+      {content ? (
+        <Markdown content={content} data-testid="agent-content-markdown" />
+      ) : (
+        agent_thoughts?.map((thought, index) => (
+          <div key={index} className="px-2 py-1" data-testid="agent-thought-item">
+            {thought.thought && (
+              <Markdown content={thought.thought} data-testid="agent-thought-markdown" />
+            )}
+            {/* {item.tool} */}
+            {/* perhaps not use tool */}
+            {!!thought.tool && (
+              <Thought thought={thought} isFinished={!!thought.observation || !responding} />
+            )}
 
-          {getImgs(thought.message_files).length > 0 && (
-            <ImageGallery srcs={getImgs(thought.message_files).map(file => file.url)} />
-          )}
-        </div>
-      ))}
+            {!!thought.message_files?.length && (
+              <FileList
+                files={thought.message_files.flatMap(
+                  (file: FileEntity | (FileResponse & { id?: string })) =>
+                    // Streaming files are normalized already; historical thoughts can carry API metadata.
+                    'transferMethod' in file
+                      ? [file]
+                      : getProcessedFilesFromResponse([
+                          { ...file, related_id: file.id ?? file.related_id },
+                        ]),
+                )}
+                showDeleteAction={false}
+                showDownloadAction={true}
+                canPreview={true}
+              />
+            )}
+          </div>
+        ))
+      )}
     </div>
   )
 }

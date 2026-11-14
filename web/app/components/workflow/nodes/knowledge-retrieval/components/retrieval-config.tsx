@@ -1,27 +1,21 @@
 'use client'
+import type { DatasetDetailWithPartialMembersResponse } from '@dify/contracts/api/console/datasets/types.gen'
 import type { FC } from 'react'
-import React, { useCallback, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import cn from 'classnames'
-import type { MultipleRetrievalConfig, SingleRetrievalConfig } from '../types'
 import type { ModelConfig } from '../../../types'
-import {
-  PortalToFollowElem,
-  PortalToFollowElemContent,
-  PortalToFollowElemTrigger,
-} from '@/app/components/base/portal-to-follow-elem'
+import type { MultipleRetrievalConfig, SingleRetrievalConfig } from '../types'
+import type { ModelParameterModalProps } from '@/app/components/header/account-setting/model-provider-page/model-parameter-modal'
+import type { DatasetConfigs } from '@/models/debug'
+import { Button } from '@langgenius/dify-ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@langgenius/dify-ui/popover'
+import { RiEqualizer2Line } from '@remixicon/react'
+import * as React from 'react'
+import { useCallback, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import ConfigRetrievalContent from '@/app/components/app/configuration/dataset-config/params-config/config-content'
-import { RETRIEVE_TYPE } from '@/types/app'
 import { DATASET_DEFAULT } from '@/config'
-import { useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
-import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import { RETRIEVE_TYPE } from '@/types/app'
 
-import type {
-  DatasetConfigs,
-} from '@/models/debug'
-import { ChevronDown } from '@/app/components/base/icons/src/vender/line/arrows'
-
-type Props = {
+type Props = Readonly<{
   payload: {
     retrieval_mode: RETRIEVE_TYPE
     multiple_retrieval_config?: MultipleRetrievalConfig
@@ -30,10 +24,15 @@ type Props = {
   onRetrievalModeChange: (mode: RETRIEVE_TYPE) => void
   onMultipleRetrievalConfigChange: (config: MultipleRetrievalConfig) => void
   singleRetrievalModelConfig?: ModelConfig
-  onSingleRetrievalModelChange?: (config: ModelConfig) => void
-  onSingleRetrievalModelParamsChange?: (config: ModelConfig) => void
+  onSingleRetrievalModelChange?: ModelParameterModalProps['setModel']
+  onSingleRetrievalModelParamsChange?: ModelParameterModalProps['onCompletionParamsChange']
   readonly?: boolean
-}
+  preserveRetrievalMode?: boolean
+  modal?: boolean
+  rerankModalOpen: boolean
+  onRerankModelOpenChange: (open: boolean) => void
+  selectedDatasets: DatasetDetailWithPartialMembersResponse[]
+}>
 
 const RetrievalConfig: FC<Props> = ({
   payload,
@@ -43,92 +42,121 @@ const RetrievalConfig: FC<Props> = ({
   onSingleRetrievalModelChange,
   onSingleRetrievalModelParamsChange,
   readonly,
+  preserveRetrievalMode,
+  modal,
+  rerankModalOpen,
+  onRerankModelOpenChange,
+  selectedDatasets,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['dataset'])
+  const { retrieval_mode, multiple_retrieval_config } = payload
 
-  const [open, setOpen] = useState(false)
+  const handleOpen = useCallback(
+    (newOpen: boolean) => {
+      onRerankModelOpenChange(newOpen)
+    },
+    [onRerankModelOpenChange],
+  )
 
-  const {
-    defaultModel: rerankDefaultModel,
-  } = useModelListAndDefaultModelAndCurrentProviderAndModel(ModelTypeEnum.rerank)
+  const datasetConfigs = useMemo(() => {
+    const { reranking_model, top_k, score_threshold, reranking_mode, weights, reranking_enable } =
+      multiple_retrieval_config || {}
 
-  const { multiple_retrieval_config } = payload
-  const handleChange = useCallback((configs: DatasetConfigs, isRetrievalModeChange?: boolean) => {
-    if (isRetrievalModeChange) {
-      onRetrievalModeChange(configs.retrieval_model)
-      return
-    }
-    onMultipleRetrievalConfigChange({
-      top_k: configs.top_k,
-      score_threshold: configs.score_threshold_enabled ? (configs.score_threshold || DATASET_DEFAULT.score_threshold) : null,
-      reranking_model: payload.retrieval_mode === RETRIEVE_TYPE.oneWay
-        ? undefined
-        : (!configs.reranking_model?.reranking_provider_name
+    return {
+      retrieval_model: retrieval_mode,
+      reranking_model:
+        reranking_model?.provider && reranking_model?.model
           ? {
-            provider: rerankDefaultModel?.provider?.provider || '',
-            model: rerankDefaultModel?.model || '',
-          }
+              reranking_provider_name: reranking_model?.provider,
+              reranking_model_name: reranking_model?.model,
+            }
           : {
-            provider: configs.reranking_model?.reranking_provider_name,
-            model: configs.reranking_model?.reranking_model_name,
-          }),
-    })
-  }, [onMultipleRetrievalConfigChange, payload.retrieval_mode, rerankDefaultModel?.provider?.provider, rerankDefaultModel?.model, onRetrievalModeChange])
+              reranking_provider_name: '',
+              reranking_model_name: '',
+            },
+      top_k: top_k || DATASET_DEFAULT.top_k,
+      score_threshold_enabled: !(score_threshold === undefined || score_threshold === null),
+      score_threshold,
+      datasets: {
+        datasets: [],
+      },
+      reranking_mode,
+      weights,
+      reranking_enable,
+    }
+  }, [retrieval_mode, multiple_retrieval_config])
+
+  const handleChange = useCallback(
+    (configs: DatasetConfigs, isRetrievalModeChange?: boolean) => {
+      // Legacy code, for compatibility, have to keep it
+      if (isRetrievalModeChange) {
+        onRetrievalModeChange(configs.retrieval_model)
+        return
+      }
+      onMultipleRetrievalConfigChange({
+        top_k: configs.top_k,
+        score_threshold: configs.score_threshold_enabled
+          ? (configs.score_threshold ?? DATASET_DEFAULT.score_threshold)
+          : null,
+        reranking_model:
+          retrieval_mode === RETRIEVE_TYPE.oneWay
+            ? undefined
+            : !configs.reranking_model?.reranking_provider_name
+              ? undefined
+              : {
+                  provider: configs.reranking_model?.reranking_provider_name,
+                  model: configs.reranking_model?.reranking_model_name,
+                },
+        reranking_mode: configs.reranking_mode,
+        weights: configs.weights,
+        reranking_enable: configs.reranking_enable,
+      })
+    },
+    [onMultipleRetrievalConfigChange, retrieval_mode, onRetrievalModeChange],
+  )
 
   return (
-    <PortalToFollowElem
-      open={open}
-      onOpenChange={setOpen}
-      placement='bottom-end'
-      offset={{
-        // mainAxis: 12,
-        crossAxis: -2,
+    <Popover
+      modal={modal}
+      open={rerankModalOpen}
+      onOpenChange={(nextOpen) => {
+        if (readonly) return
+        handleOpen(nextOpen)
       }}
     >
-      <PortalToFollowElemTrigger
-        onClick={() => {
-          if (readonly)
-            return
-          setOpen(v => !v)
-        }}
+      <PopoverTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="small"
+            disabled={readonly}
+            className="data-popup-open:bg-components-button-ghost-bg-hover"
+          >
+            <RiEqualizer2Line className="size-3.5" />
+            {t(($) => $.retrievalSettings, { ns: 'dataset' })}
+          </Button>
+        }
+      />
+      <PopoverContent
+        align="end"
+        sideOffset={0}
+        alignOffset={-2}
+        className="border-none bg-transparent shadow-none"
       >
-        <div className={cn(!readonly && 'cursor-pointer', open && 'bg-gray-100', 'flex items-center h-6  px-2 rounded-md hover:bg-gray-100 group  select-none')}>
-          <div className={cn(open ? 'text-gray-700' : 'text-gray-500', 'leading-[18px] text-xs font-medium group-hover:bg-gray-100')}>{payload.retrieval_mode === RETRIEVE_TYPE.oneWay ? t('appDebug.datasetConfig.retrieveOneWay.title') : t('appDebug.datasetConfig.retrieveMultiWay.title')}</div>
-          {!readonly && <ChevronDown className='w-3 h-3 ml-1' />}
-        </div>
-      </PortalToFollowElemTrigger>
-      <PortalToFollowElemContent style={{ zIndex: 1001 }}>
-        <div className='w-[404px] pt-3 pb-4 px-4 shadow-xl  rounded-2xl border border-gray-200  bg-white'>
+        <div className="w-101 rounded-2xl border border-components-panel-border bg-components-panel-bg px-4 pt-3 pb-4 shadow-xl">
           <ConfigRetrievalContent
-            datasetConfigs={
-              {
-                retrieval_model: payload.retrieval_mode,
-                reranking_model: !multiple_retrieval_config?.reranking_model?.provider
-                  ? {
-                    reranking_provider_name: rerankDefaultModel?.provider?.provider || '',
-                    reranking_model_name: rerankDefaultModel?.model || '',
-                  }
-                  : {
-                    reranking_provider_name: multiple_retrieval_config?.reranking_model?.provider || '',
-                    reranking_model_name: multiple_retrieval_config?.reranking_model?.model || '',
-                  },
-                top_k: multiple_retrieval_config?.top_k || DATASET_DEFAULT.top_k,
-                score_threshold_enabled: !(multiple_retrieval_config?.score_threshold === undefined || multiple_retrieval_config?.score_threshold === null),
-                score_threshold: multiple_retrieval_config?.score_threshold,
-                datasets: {
-                  datasets: [],
-                },
-              }
-            }
+            datasetConfigs={datasetConfigs}
             onChange={handleChange}
+            selectedDatasets={selectedDatasets}
             isInWorkflow
+            preserveRetrievalMode={preserveRetrievalMode}
             singleRetrievalModelConfig={singleRetrievalModelConfig}
             onSingleRetrievalModelChange={onSingleRetrievalModelChange}
             onSingleRetrievalModelParamsChange={onSingleRetrievalModelParamsChange}
           />
         </div>
-      </PortalToFollowElemContent>
-    </PortalToFollowElem>
+      </PopoverContent>
+    </Popover>
   )
 }
 export default React.memo(RetrievalConfig)

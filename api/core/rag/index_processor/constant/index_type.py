@@ -1,8 +1,12 @@
-from enum import Enum
+from enum import StrEnum
 
 
-class IndexType(Enum):
+class IndexStructureType(StrEnum):
     PARAGRAPH_INDEX = "text_model"
     QA_INDEX = "qa_model"
-    PARENT_CHILD_INDEX = "parent_child_index"
-    SUMMARY_INDEX = "summary_index"
+    PARENT_CHILD_INDEX = "hierarchical_model"
+
+
+class IndexTechniqueType(StrEnum):
+    ECONOMY = "economy"
+    HIGH_QUALITY = "high_quality"

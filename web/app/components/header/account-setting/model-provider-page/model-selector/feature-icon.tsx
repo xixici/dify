@@ -1,73 +1,138 @@
-import type { FC } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
 import { useTranslation } from 'react-i18next'
+import { ModelFeatureEnum, ModelFeatureTextEnum } from '../declarations'
 import ModelBadge from '../model-badge'
-import {
-  ModelFeatureEnum,
-  ModelFeatureTextEnum,
-} from '../declarations'
-import {
-  // MagicBox,
-  MagicEyes,
-  // MagicWand,
-  // Robot,
-} from '@/app/components/base/icons/src/vender/solid/mediaAndDevices'
-import TooltipPlus from '@/app/components/base/tooltip-plus'
 
 type FeatureIconProps = {
-  feature: ModelFeatureEnum
+  feature: string
   className?: string
+  showFeaturesLabel?: boolean
 }
-const FeatureIcon: FC<FeatureIconProps> = ({
-  className,
-  feature,
-}) => {
-  const { t } = useTranslation()
-
-  // if (feature === ModelFeatureEnum.agentThought) {
-  //   return (
-  //     <TooltipPlus
-  //       popupContent={t('common.modelProvider.featureSupported', { feature: ModelFeatureTextEnum.agentThought })}
-  //     >
-  //       <ModelBadge className={`mr-0.5 !px-0 w-[18px] justify-center text-gray-500 ${className}`}>
-  //         <Robot className='w-3 h-3' />
-  //       </ModelBadge>
-  //     </TooltipPlus>
-  //   )
-  // }
-
-  // if (feature === ModelFeatureEnum.toolCall) {
-  //   return (
-  //     <TooltipPlus
-  //       popupContent={t('common.modelProvider.featureSupported', { feature: ModelFeatureTextEnum.toolCall })}
-  //     >
-  //       <ModelBadge className={`mr-0.5 !px-0 w-[18px] justify-center text-gray-500 ${className}`}>
-  //         <MagicWand className='w-3 h-3' />
-  //       </ModelBadge>
-  //     </TooltipPlus>
-  //   )
-  // }
-
-  // if (feature === ModelFeatureEnum.multiToolCall) {
-  //   return (
-  //     <TooltipPlus
-  //       popupContent={t('common.modelProvider.featureSupported', { feature: ModelFeatureTextEnum.multiToolCall })}
-  //     >
-  //       <ModelBadge className={`mr-0.5 !px-0 w-[18px] justify-center text-gray-500 ${className}`}>
-  //         <MagicBox className='w-3 h-3' />
-  //       </ModelBadge>
-  //     </TooltipPlus>
-  //   )
-  // }
+function FeatureIcon({ className, feature, showFeaturesLabel }: FeatureIconProps) {
+  const { t } = useTranslation(['modelProvider'])
 
   if (feature === ModelFeatureEnum.vision) {
-    return (
-      <TooltipPlus
-        popupContent={t('common.modelProvider.featureSupported', { feature: ModelFeatureTextEnum.vision })}
-      >
-        <ModelBadge className={`mr-0.5 !px-0 w-[18px] justify-center text-gray-500 ${className}`}>
-          <MagicEyes className='w-3 h-3' />
+    if (showFeaturesLabel) {
+      return (
+        <ModelBadge className={cn('gap-x-0.5', className)}>
+          <span className="i-ri-image-circle-ai-line size-3" aria-hidden="true" />
+          <span>{ModelFeatureTextEnum.vision}</span>
         </ModelBadge>
-      </TooltipPlus>
+      )
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="inline-block cursor-help">
+              <ModelBadge className={cn('w-4.5 justify-center px-0!', className)}>
+                <span className="i-ri-image-circle-ai-line size-3" aria-hidden="true" />
+              </ModelBadge>
+            </span>
+          }
+        />
+        <TooltipContent>
+          {t(($) => $['modelProvider.featureSupported'], {
+            ns: 'modelProvider',
+            feature: ModelFeatureTextEnum.vision,
+          })}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  if (feature === ModelFeatureEnum.document) {
+    if (showFeaturesLabel) {
+      return (
+        <ModelBadge className={cn('gap-x-0.5', className)}>
+          <span className="i-ri-file-text-line size-3" aria-hidden="true" />
+          <span>{ModelFeatureTextEnum.document}</span>
+        </ModelBadge>
+      )
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="inline-block cursor-help">
+              <ModelBadge className={cn('w-4.5 justify-center px-0!', className)}>
+                <span className="i-ri-file-text-line size-3" aria-hidden="true" />
+              </ModelBadge>
+            </span>
+          }
+        />
+        <TooltipContent>
+          {t(($) => $['modelProvider.featureSupported'], {
+            ns: 'modelProvider',
+            feature: ModelFeatureTextEnum.document,
+          })}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  if (feature === ModelFeatureEnum.audio) {
+    if (showFeaturesLabel) {
+      return (
+        <ModelBadge className={cn('gap-x-0.5', className)}>
+          <span className="i-ri-voice-ai-fill size-3" aria-hidden="true" />
+          <span>{ModelFeatureTextEnum.audio}</span>
+        </ModelBadge>
+      )
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="inline-block cursor-help">
+              <ModelBadge className={cn('w-4.5 justify-center px-0!', className)}>
+                <span className="i-ri-voice-ai-fill size-3" aria-hidden="true" />
+              </ModelBadge>
+            </span>
+          }
+        />
+        <TooltipContent>
+          {t(($) => $['modelProvider.featureSupported'], {
+            ns: 'modelProvider',
+            feature: ModelFeatureTextEnum.audio,
+          })}
+        </TooltipContent>
+      </Tooltip>
+    )
+  }
+
+  if (feature === ModelFeatureEnum.video) {
+    if (showFeaturesLabel) {
+      return (
+        <ModelBadge className={cn('gap-x-0.5', className)}>
+          <span className="i-ri-film-ai-line size-3" aria-hidden="true" />
+          <span>{ModelFeatureTextEnum.video}</span>
+        </ModelBadge>
+      )
+    }
+
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="inline-block cursor-help">
+              <ModelBadge className={cn('w-4.5 justify-center px-0!', className)}>
+                <span className="i-ri-film-ai-line size-3" aria-hidden="true" />
+              </ModelBadge>
+            </span>
+          }
+        />
+        <TooltipContent>
+          {t(($) => $['modelProvider.featureSupported'], {
+            ns: 'modelProvider',
+            feature: ModelFeatureTextEnum.video,
+          })}
+        </TooltipContent>
+      </Tooltip>
     )
   }
 

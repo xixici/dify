@@ -1,113 +1,150 @@
-import type { FC } from 'react'
+import type { ModelProviderSummaryResponse } from '@dify/contracts/api/console/workspaces/types.gen'
+import type { ReactNode } from 'react'
+import type { ModelProvider, PreferredProviderTypeEnum } from '../declarations'
+import type { CardVariant } from './use-credential-panel-state'
+import { StatusDot } from '@langgenius/dify-ui/status-dot'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { ModelProvider } from '../declarations'
-import {
-  ConfigurateMethodEnum,
-  CustomConfigurationStatusEnum,
-  PreferredProviderTypeEnum,
-} from '../declarations'
-import {
-  useUpdateModelList,
-  useUpdateModelProviders,
-} from '../hooks'
-import PrioritySelector from './priority-selector'
-import PriorityUseTip from './priority-use-tip'
-import { UPDATE_MODEL_PROVIDER_CUSTOM_MODEL_LIST } from './index'
-import Indicator from '@/app/components/header/indicator'
-import { Settings01 } from '@/app/components/base/icons/src/vender/line/general'
-import Button from '@/app/components/base/button'
-import { changeModelProviderPriority } from '@/service/common'
-import { useToastContext } from '@/app/components/base/toast'
-import { useEventEmitterContextContext } from '@/context/event-emitter'
+import ModelAuthDropdown from './model-auth-dropdown'
+import SystemQuotaCard from './system-quota-card'
+import { useChangeProviderPriority } from './use-change-provider-priority'
+import { isDestructiveVariant, useCredentialPanelState } from './use-credential-panel-state'
 
 type CredentialPanelProps = {
-  provider: ModelProvider
-  onSetup: () => void
+  provider: ModelProviderSummaryResponse | ModelProvider
 }
-const CredentialPanel: FC<CredentialPanelProps> = ({
+
+type CredentialPanelContentProps = {
+  provider: ModelProviderSummaryResponse | ModelProvider
+  state: ReturnType<typeof useCredentialPanelState>
+  isChangingPriority: boolean
+  onChangePriority: (key: PreferredProviderTypeEnum) => void
+  renderActions?: (props: {
+    provider: ModelProviderSummaryResponse | ModelProvider
+    state: ReturnType<typeof useCredentialPanelState>
+    isChangingPriority: boolean
+    onChangePriority: (key: PreferredProviderTypeEnum) => void
+  }) => ReactNode
+}
+
+const TEXT_LABEL_VARIANTS = new Set<CardVariant>([
+  'credits-active',
+  'credits-fallback',
+  'credits-exhausted',
+  'no-usage',
+  'api-required-add',
+  'api-required-configure',
+])
+
+const CredentialPanelContent = ({
   provider,
-  onSetup,
-}) => {
-  const { t } = useTranslation()
-  const { notify } = useToastContext()
-  const { eventEmitter } = useEventEmitterContextContext()
-  const updateModelList = useUpdateModelList()
-  const updateModelProviders = useUpdateModelProviders()
-  const customConfig = provider.custom_configuration
-  const systemConfig = provider.system_configuration
-  const priorityUseType = provider.preferred_provider_type
-  const customConfiged = customConfig.status === CustomConfigurationStatusEnum.active
-  const configurateMethods = provider.configurate_methods
+  state,
+  isChangingPriority,
+  onChangePriority,
+  renderActions,
+}: CredentialPanelContentProps) => {
+  const { variant, credentialName } = state
+  const isDestructive = isDestructiveVariant(variant)
+  const isTextLabel = TEXT_LABEL_VARIANTS.has(variant)
+  const needsGap = !isTextLabel || variant === 'credits-fallback'
 
-  const handleChangePriority = async (key: PreferredProviderTypeEnum) => {
-    const res = await changeModelProviderPriority({
-      url: `/workspaces/current/model-providers/${provider.provider}/preferred-provider-type`,
-      body: {
-        preferred_provider_type: key,
-      },
-    })
-    if (res.result === 'success') {
-      notify({ type: 'success', message: t('common.actionMsg.modifiedSuccessfully') })
-      updateModelProviders()
+  return (
+    <SystemQuotaCard variant={isDestructive ? 'destructive' : 'default'}>
+      <SystemQuotaCard.Label className={needsGap ? 'gap-1' : undefined}>
+        {isTextLabel ? (
+          <TextLabel variant={variant} />
+        ) : (
+          <CredentialStatus variant={variant} credentialName={credentialName} />
+        )}
+      </SystemQuotaCard.Label>
+      <SystemQuotaCard.Actions>
+        {renderActions ? (
+          renderActions({ provider, state, isChangingPriority, onChangePriority })
+        ) : (
+          <ModelAuthDropdown
+            provider={provider}
+            state={state}
+            isChangingPriority={isChangingPriority}
+            onChangePriority={onChangePriority}
+          />
+        )}
+      </SystemQuotaCard.Actions>
+    </SystemQuotaCard>
+  )
+}
 
-      configurateMethods.forEach((method) => {
-        if (method === ConfigurateMethodEnum.predefinedModel)
-          provider.supported_model_types.forEach(modelType => updateModelList(modelType))
-      })
+const CredentialPanel = ({ provider }: CredentialPanelProps) => {
+  // oxlint-disable-next-line eslint-react/use-state -- This is a domain hook, not React's useState.
+  const credentialPanelInfo = useCredentialPanelState(provider)
+  const { isChangingPriority, handleChangePriority } = useChangeProviderPriority(provider)
 
-      eventEmitter?.emit({
-        type: UPDATE_MODEL_PROVIDER_CUSTOM_MODEL_LIST,
-        payload: provider.provider,
-      } as any)
-    }
-  }
+  return (
+    <CredentialPanelContent
+      provider={provider}
+      state={credentialPanelInfo}
+      isChangingPriority={isChangingPriority}
+      onChangePriority={handleChangePriority}
+    />
+  )
+}
+
+const TEXT_LABEL_KEYS = {
+  'credits-active': 'modelProvider.card.aiCreditsInUse',
+  'credits-fallback': 'modelProvider.card.aiCreditsInUse',
+  'credits-exhausted': 'modelProvider.card.quotaExhausted',
+  'no-usage': 'modelProvider.card.noAvailableUsage',
+  'api-required-add': 'modelProvider.card.apiKeyRequired',
+  'api-required-configure': 'modelProvider.card.apiKeyRequired',
+} as const satisfies Partial<Record<CardVariant, string>>
+
+function TextLabel({ variant }: { variant: CardVariant }) {
+  const { t } = useTranslation(['modelProvider'])
+  const isDestructive = isDestructiveVariant(variant)
+  const labelKey = TEXT_LABEL_KEYS[variant as keyof typeof TEXT_LABEL_KEYS]
 
   return (
     <>
-      {
-        provider.provider_credential_schema && (
-          <div className='shrink-0 relative ml-1 p-1 w-[112px] rounded-lg bg-white/[0.3] border-[0.5px] border-black/5'>
-            <div className='flex items-center justify-between mb-1 pt-1 pl-2 pr-[7px] h-5 text-xs font-medium text-gray-500'>
-              API-KEY
-              <Indicator color={customConfiged ? 'green' : 'gray'} />
-            </div>
-            <div className='flex items-center gap-0.5'>
-              <Button
-                className='grow px-0 h-6 bg-white text-xs font-medium rounded-md'
-                onClick={onSetup}
-              >
-                <Settings01 className='mr-1 w-3 h-3' />
-                {t('common.operation.setup')}
-              </Button>
-              {
-                systemConfig.enabled && customConfiged && (
-                  <PrioritySelector
-                    value={priorityUseType}
-                    onSelect={handleChangePriority}
-                  />
-                )
-              }
-            </div>
-            {
-              priorityUseType === PreferredProviderTypeEnum.custom && systemConfig.enabled && (
-                <PriorityUseTip />
-              )
-            }
-          </div>
-        )
-      }
-      {
-        systemConfig.enabled && customConfiged && !provider.provider_credential_schema && (
-          <div className='ml-1'>
-            <PrioritySelector
-              value={priorityUseType}
-              onSelect={handleChangePriority}
-            />
-          </div>
-        )
-      }
+      <span className={isDestructive ? 'text-text-destructive' : 'text-text-secondary'}>
+        {t(($) => $[labelKey], { ns: 'modelProvider' })}
+      </span>
+      {variant === 'credits-fallback' && (
+        <span
+          aria-hidden
+          className="i-custom-vender-line-alertsAndFeedback-warning size-3 shrink-0 text-text-warning"
+        />
+      )}
     </>
   )
 }
 
-export default CredentialPanel
+function CredentialStatus({
+  variant,
+  credentialName,
+}: {
+  variant: CardVariant
+  credentialName: string | undefined
+}) {
+  const isDestructive = isDestructiveVariant(variant)
+  const dotColor = isDestructive ? 'error' : 'success'
+  const showWarning = variant === 'api-fallback'
+
+  return (
+    <>
+      <StatusDot className="shrink-0" size="small" status={dotColor} />
+      <span
+        className={`truncate ${isDestructive ? 'text-text-destructive' : 'text-text-secondary'}`}
+        title={credentialName}
+      >
+        {credentialName}
+      </span>
+      {showWarning && (
+        <span
+          aria-hidden
+          className="ms-auto i-custom-vender-line-alertsAndFeedback-warning size-3 shrink-0 text-text-warning"
+        />
+      )}
+    </>
+  )
+}
+
+export default memo(CredentialPanel)

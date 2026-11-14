@@ -1,19 +1,47 @@
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useWorkflow } from '../hooks'
+import { getWorkflowVersionName } from '@/app/components/workflow/utils/version'
+import { useFormatTimeFromNow } from '@/hooks/use-format-time-from-now'
+import useTimestamp from '@/hooks/use-timestamp'
 import { useStore } from '../store'
-import { ClockRefresh } from '@/app/components/base/icons/src/vender/line/time'
+import { WorkflowVersion } from '../types'
 
 const RestoringTitle = () => {
-  const { t } = useTranslation()
-  const { formatTimeFromNow } = useWorkflow()
-  const publishedAt = useStore(state => state.publishedAt)
+  const { t } = useTranslation(['workflow', 'workflowHistory'])
+  const { formatTimeFromNow } = useFormatTimeFromNow()
+  const { formatTime } = useTimestamp()
+  const currentVersion = useStore((state) => state.currentVersion)
+  const isDraft = currentVersion?.version === WorkflowVersion.Draft
+  const publishStatus = isDraft
+    ? t(($) => $['common.unpublished'], { ns: 'workflow' })
+    : t(($) => $['common.published'], { ns: 'workflow' })
+
+  const versionName = isDraft
+    ? t(($) => $['versionHistory.currentDraft'], { ns: 'workflowHistory' })
+    : getWorkflowVersionName(
+        currentVersion,
+        t(($) => $['versionHistory.defaultName'], { ns: 'workflowHistory' }),
+      )
 
   return (
-    <div className='flex items-center h-[18px] text-xs text-gray-500'>
-      <ClockRefresh className='mr-1 w-3 h-3 text-gray-500' />
-      {t('workflow.common.latestPublished')}
-      {formatTimeFromNow(publishedAt)}
+    <div className="flex flex-col gap-y-0.5">
+      <div className="flex items-center gap-x-1">
+        <span className="system-sm-semibold text-text-primary">{versionName}</span>
+        <span className="rounded-[5px] border border-text-accent-secondary bg-components-badge-bg-dimm px-1 py-0.5 system-2xs-medium-uppercase text-text-accent-secondary">
+          {t(($) => $['common.viewOnly'], { ns: 'workflow' })}
+        </span>
+      </div>
+      <div className="flex h-4 items-center gap-x-1 system-xs-regular text-text-tertiary">
+        {currentVersion && (
+          <>
+            <span>{publishStatus}</span>
+            <span>·</span>
+            <span>{`${formatTimeFromNow((isDraft ? currentVersion.updated_at : currentVersion.created_at) * 1000)} ${formatTime(currentVersion.created_at, 'HH:mm:ss')}`}</span>
+            <span>·</span>
+            <span>{currentVersion?.created_by?.name || ''}</span>
+          </>
+        )}
+      </div>
     </div>
   )
 }

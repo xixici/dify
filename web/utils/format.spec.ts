@@ -1,0 +1,67 @@
+import dayjs from 'dayjs'
+import {
+  formatFileSize,
+  formatNumber,
+  formatNumberAbbreviated,
+  formatTime,
+  formatToLocalTime,
+} from './format'
+
+describe('formatNumber', () => {
+  it.each([
+    [1234567, '1,234,567'],
+    [-1234567.89, '-1,234,567.89'],
+    ['8E-7', '0.0000008'],
+    [1.23e-7, '0.000000123'],
+  ])('formats %s without losing precision', (input, expected) => {
+    expect(formatNumber(input)).toBe(expected)
+  })
+})
+
+describe('formatFileSize', () => {
+  it.each([
+    [500, '500.00 bytes'],
+    [1024, '1.00 KB'],
+    [1500000, '1.43 MB'],
+    [1500000000, '1.40 GB'],
+  ])('formats %s bytes as %s', (input, expected) => {
+    expect(formatFileSize(input)).toBe(expected)
+  })
+  it('should clamp to PB instead of an undefined unit for very large sizes', () => {
+    expect(formatFileSize(1024 ** 6)).toBe('1024.00 PB')
+  })
+})
+
+describe('formatTime', () => {
+  it.each([
+    [30, '30.00 sec'],
+    [60, '1.00 min'],
+    [3600, '1.00 h'],
+  ])('formats %s seconds as %s', (input, expected) => {
+    expect(formatTime(input)).toBe(expected)
+  })
+  it('should clamp to hours instead of an undefined unit for very large durations', () => {
+    expect(formatTime(216000)).toBe('60.00 h')
+  })
+})
+
+describe('formatNumberAbbreviated', () => {
+  it.each([
+    [999, '999'],
+    [1200, '1.2k'],
+    [1500000, '1.5M'],
+    [2300000000, '2.3B'],
+  ])('abbreviates %s as %s', (input, expected) => {
+    expect(formatNumberAbbreviated(input)).toBe(expected)
+  })
+})
+
+describe('formatToLocalTime', () => {
+  it.each([
+    ['ar-TN', 'يناير'],
+    ['lo-LA', 'ມັງກອນ'],
+    ['en-US', 'January'],
+  ] as const)('formats month names in %s', (locale, expectedMonth) => {
+    expect(formatToLocalTime(dayjs('2026-01-15'), locale, 'MMMM')).toBe(expectedMonth)
+  })
+})

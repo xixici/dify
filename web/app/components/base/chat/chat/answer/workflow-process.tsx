@@ -1,106 +1,158 @@
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
-import cn from 'classnames'
+import type { ChatItem, WorkflowProcess } from '../../types'
+import { Alert, AlertTitle } from '@langgenius/dify-ui/alert'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useStore as useAtomStore } from 'jotai'
+import { use, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { WorkflowProcess } from '../../types'
-import { CheckCircle } from '@/app/components/base/icons/src/vender/solid/general'
-import { AlertCircle } from '@/app/components/base/icons/src/vender/solid/alertsAndFeedback'
-import { Loading02 } from '@/app/components/base/icons/src/vender/line/general'
-import { ChevronRight } from '@/app/components/base/icons/src/vender/line/arrows'
+import { WorkflowContext } from '@/app/components/workflow/context'
+import { editorAppIdAtom } from '@/app/components/workflow/editor-resource/state'
+import { localizeKnowledgeRetrievalV2Error } from '@/app/components/workflow/nodes/knowledge-retrieval-v2/error-message'
+import TracingPanel from '@/app/components/workflow/run/tracing-panel'
 import { WorkflowRunningStatus } from '@/app/components/workflow/types'
-import NodePanel from '@/app/components/workflow/run/node'
 
 type WorkflowProcessProps = {
   data: WorkflowProcess
-  grayBg?: boolean
+  item?: ChatItem
   expand?: boolean
   hideInfo?: boolean
+  hideProcessDetail?: boolean
+  readonly?: boolean
 }
 const WorkflowProcessItem = ({
   data,
-  grayBg,
+  item,
   expand = false,
   hideInfo = false,
+  hideProcessDetail = false,
+  readonly = false,
 }: WorkflowProcessProps) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['workflow'])
+  const workflowStore = use(WorkflowContext)
+  const atomStore = useAtomStore()
+  const appId = workflowStore ? atomStore.get(editorAppIdAtom) : undefined
   const [collapse, setCollapse] = useState(!expand)
   const running = data.status === WorkflowRunningStatus.Running
   const succeeded = data.status === WorkflowRunningStatus.Succeeded
-  const failed = data.status === WorkflowRunningStatus.Failed || data.status === WorkflowRunningStatus.Stopped
-
-  const background = useMemo(() => {
-    if (running && !collapse)
-      return 'linear-gradient(180deg, #E1E4EA 0%, #EAECF0 100%)'
-
-    if (succeeded && !collapse)
-      return 'linear-gradient(180deg, #ECFDF3 0%, #F6FEF9 100%)'
-
-    if (failed && !collapse)
-      return 'linear-gradient(180deg, #FEE4E2 0%, #FEF3F2 100%)'
-  }, [running, succeeded, failed, collapse])
+  const failed =
+    data.status === WorkflowRunningStatus.Failed || data.status === WorkflowRunningStatus.Stopped
+  const paused = data.status === WorkflowRunningStatus.Paused
+  const latestNode = data.tracing[data.tracing.length - 1]
+  const localizeError = (error?: string) =>
+    localizeKnowledgeRetrievalV2Error(error, (key) => t(($) => $[key], { ns: 'workflow' }))
+  const localizedError = localizeError(data.error)
+  const localizedLatestNodeError = localizeError(latestNode?.error)
+  const fallbackTitle = t(($) => $['common.workflowProcess'], { ns: 'workflow' })
+  const statusLabel = running
+    ? t(($) => $['common.workflowProcessRunning'], { ns: 'workflow' })
+    : succeeded
+      ? t(($) => $['common.workflowProcessSucceeded'], { ns: 'workflow' })
+      : failed
+        ? t(($) => $['common.workflowProcessFailed'], { ns: 'workflow' })
+        : paused
+          ? t(($) => $['common.workflowProcessPaused'], { ns: 'workflow' })
+          : undefined
+  const collapsedTitle = failed
+    ? localizedError || localizedLatestNodeError || latestNode?.title || fallbackTitle
+    : latestNode?.title || fallbackTitle
 
   useEffect(() => {
     setCollapse(!expand)
   }, [expand])
 
+  if (readonly) return null
+
   return (
     <div
       className={cn(
-        'mb-2 rounded-xl border-[0.5px] border-black/[0.08]',
-        collapse ? 'py-[7px]' : hideInfo ? 'pt-2 pb-1' : 'py-2',
-        collapse && (!grayBg ? 'bg-white' : 'bg-gray-50'),
-        hideInfo ? 'mx-[-8px] px-1' : 'w-full px-3',
+        '-mx-1 rounded-xl px-2.5',
+        collapse
+          ? 'border-s-[0.25px] border-components-panel-border py-1.75'
+          : 'border-[0.5px] border-components-panel-border-subtle px-1 pt-1.75 pb-1',
+        running && !collapse && 'bg-background-section-burn',
+        succeeded && !collapse && 'bg-state-success-hover',
+        failed && !collapse && 'bg-state-destructive-hover',
+        paused && !collapse && 'bg-state-warning-hover',
+        collapse && !failed && !paused && 'bg-workflow-process-bg',
+        collapse && paused && 'bg-workflow-process-paused-bg',
+        collapse && failed && 'bg-(--color-workflow-process-failed-bg)',
       )}
-      style={{
-        background,
-      }}
+      data-testid="workflow-process-item"
     >
-      <div
+      <button
+        type="button"
         className={cn(
-          'flex items-center h-[18px] cursor-pointer',
-          hideInfo && 'px-[6px]',
+          'flex w-full cursor-pointer items-center border-0 bg-transparent p-0 text-start',
+          !collapse && 'px-1.5',
         )}
+        aria-expanded={!collapse}
         onClick={() => setCollapse(!collapse)}
       >
-        {
-          running && (
-            <Loading02 className='shrink-0 mr-1 w-3 h-3 text-[#667085] animate-spin' />
-          )
-        }
-        {
-          succeeded && (
-            <CheckCircle className='shrink-0 mr-1 w-3 h-3 text-[#12B76A]' />
-          )
-        }
-        {
-          failed && (
-            <AlertCircle className='shrink-0 mr-1 w-3 h-3 text-[#F04438]' />
-          )
-        }
-        <div className='grow text-xs font-medium text-gray-700'>
-          {t('workflow.common.workflowProcess')}
+        {running && (
+          <span
+            role="img"
+            aria-label={statusLabel}
+            className="me-1 i-ri-loader-2-line size-3.5 shrink-0 animate-spin text-text-tertiary"
+          />
+        )}
+        {succeeded && (
+          <span
+            role="img"
+            aria-label={statusLabel}
+            className="me-1 i-custom-vender-solid-general-check-circle size-3.5 shrink-0 text-text-success"
+          />
+        )}
+        {failed && (
+          <span
+            role="img"
+            aria-label={statusLabel}
+            className="me-1 i-ri-error-warning-fill size-3.5 shrink-0 text-text-destructive"
+          />
+        )}
+        {paused && (
+          <span
+            role="img"
+            aria-label={statusLabel}
+            className="me-1 i-ri-pause-circle-fill size-3.5 shrink-0 text-text-warning-secondary"
+          />
+        )}
+        <div
+          className={cn(
+            'min-w-0 grow truncate system-xs-medium',
+            collapse && failed && data.error ? 'text-text-destructive' : 'text-text-secondary',
+          )}
+        >
+          {!collapse ? fallbackTitle : collapsedTitle}
         </div>
-        <ChevronRight className={`'ml-1 w-3 h-3 text-gray-500' ${collapse ? '' : 'rotate-90'}`} />
-      </div>
-      {
-        !collapse && (
-          <div className='mt-1.5'>
-            {
-              data.tracing.map(node => (
-                <div key={node.id} className='mb-1 last-of-type:mb-0'>
-                  <NodePanel
-                    nodeInfo={node}
-                    hideInfo={hideInfo}
-                  />
-                </div>
-              ))
-            }
-          </div>
-        )
-      }
+        <span
+          aria-hidden
+          className={cn(
+            'ms-1 i-ri-arrow-right-s-line size-4 shrink-0 text-text-tertiary',
+            !collapse && 'rotate-90',
+          )}
+        />
+      </button>
+      {!collapse && (
+        <div className="mt-1.5">
+          {failed && data.error && (
+            <Alert type="error" className="mb-1.5">
+              <AlertTitle>{localizedError}</AlertTitle>
+            </Alert>
+          )}
+          {data.tracing.length > 0 && (
+            <TracingPanel
+              key={item?.workflow_run_id}
+              list={data.tracing}
+              workflowRun={
+                appId && item?.workflow_run_id
+                  ? { appId, runId: item.workflow_run_id, status: data.status }
+                  : undefined
+              }
+              hideNodeInfo={hideInfo}
+              hideNodeProcessDetail={hideProcessDetail}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,88 +1,79 @@
 import type { FC } from 'react'
-import {
-  memo,
-  useCallback,
-  useState,
-} from 'react'
-import { useTranslation } from 'react-i18next'
-import {
-  useNodeDataUpdate,
-  useNodesInteractions,
-  useNodesSyncDraft,
-} from '../../../hooks'
 import type { Node } from '../../../types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
+import { memo } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useHooksStore } from '@/app/components/workflow/hooks-store'
+import { NodeActionsMenu } from '@/app/components/workflow/node-actions-menu'
+import { useWorkflowStore } from '@/app/components/workflow/store'
+import { useNodesInteractions } from '../../../hooks/use-nodes-interactions'
+import { useNodesReadOnly } from '../../../hooks/use-workflow'
+import { NodeRunningStatus } from '../../../types'
 import { canRunBySingle } from '../../../utils'
-import PanelOperator from './panel-operator'
-import {
-  Play,
-  Stop,
-} from '@/app/components/base/icons/src/vender/line/mediaAndDevices'
-import TooltipPlus from '@/app/components/base/tooltip-plus'
 
-type NodeControlProps = Pick<Node, 'id' | 'data'>
-const NodeControl: FC<NodeControlProps> = ({
-  id,
-  data,
-}) => {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const { handleNodeDataUpdate } = useNodeDataUpdate()
+type NodeControlProps = Pick<Node, 'id' | 'data'> & {
+  pluginInstallLocked?: boolean
+}
+const NodeControl: FC<NodeControlProps> = ({ id, data, pluginInstallLocked }) => {
+  const { t } = useTranslation(['workflow', 'workflowDebug'])
   const { handleNodeSelect } = useNodesInteractions()
-  const { handleSyncWorkflowDraft } = useNodesSyncDraft()
+  const { nodesReadOnly } = useNodesReadOnly()
+  const workflowStore = useWorkflowStore()
+  const canRun = useHooksStore((s) => s.accessControl.canRun)
+  const isSingleRunning = data._singleRunningStatus === NodeRunningStatus.Running
 
-  const handleOpenChange = useCallback((newOpen: boolean) => {
-    setOpen(newOpen)
-  }, [])
-
+  const isChildNode = !!(data.isInIteration || data.isInLoop)
   return (
     <div
-      className={`
-      hidden group-hover:flex pb-1 absolute right-0 -top-7 h-7
-      ${data.selected && '!flex'}
-      ${open && '!flex'}
-      `}
+      className={cn(
+        'pointer-events-none absolute -top-8 right-0 flex h-8 origin-bottom-right pb-1 opacity-0',
+        'focus-within:pointer-events-auto focus-within:opacity-100',
+        !pluginInstallLocked && 'group-hover:pointer-events-auto group-hover:opacity-100',
+        data.selected && 'pointer-events-auto opacity-100',
+        'has-data-popup-open:pointer-events-auto has-data-popup-open:opacity-100',
+      )}
+      style={{ scale: 'var(--workflow-control-scale, 1)' }}
     >
       <div
-        className='flex items-center px-0.5 h-6 bg-white rounded-lg border-[0.5px] border-gray-100 shadow-xs text-gray-500'
-        onClick={e => e.stopPropagation()}
+        className="nodrag nopan nowheel flex h-7 items-center rounded-lg border-[0.5px] border-components-actionbar-border bg-components-actionbar-bg px-0.5 text-text-tertiary shadow-md backdrop-blur-[5px]"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
-        {
-          canRunBySingle(data.type) && (
-            <div
-              className='flex items-center justify-center w-5 h-5 rounded-md cursor-pointer hover:bg-black/5'
-              onClick={() => {
-                handleNodeDataUpdate({
-                  id,
-                  data: {
-                    _isSingleRun: !data._isSingleRun,
-                  },
-                })
-                handleNodeSelect(id)
-                if (!data._isSingleRun)
-                  handleSyncWorkflowDraft(true)
-              }}
-            >
-              {
-                data._isSingleRun
-                  ? <Stop className='w-3 h-3' />
-                  : (
-                    <TooltipPlus
-                      popupContent={t('workflow.panel.runThisStep')}
-                    >
-                      <Play className='w-3 h-3' />
-                    </TooltipPlus>
-                  )
-              }
-            </div>
-          )
-        }
-        <PanelOperator
-          id={id}
-          data={data}
-          offset={0}
-          onOpenChange={handleOpenChange}
-          triggerClassName='!w-5 !h-5'
-        />
+        {canRun && !nodesReadOnly && canRunBySingle(data.type, isChildNode) && (
+          <button
+            type="button"
+            aria-label={
+              isSingleRunning
+                ? t(($) => $['debug.variableInspect.trigger.stop'], { ns: 'workflowDebug' })
+                : t(($) => $['panel.runThisStep'], { ns: 'workflow' })
+            }
+            className={`flex size-6 items-center justify-center rounded-md ${isSingleRunning && 'cursor-pointer hover:bg-state-base-hover'}`}
+            onClick={() => {
+              const action = isSingleRunning ? 'stop' : 'run'
+
+              const store = workflowStore.getState()
+              store.setInitShowLastRunTab(true)
+              store.setPendingSingleRun({
+                nodeId: id,
+                action,
+              })
+              handleNodeSelect(id)
+            }}
+          >
+            {isSingleRunning ? (
+              <span aria-hidden className="i-custom-vender-line-mediaanddevices-stop size-3" />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger render={<span className="i-ri-play-large-line size-3" />} />
+                <TooltipContent>
+                  {t(($) => $['panel.runThisStep'], { ns: 'workflow' })}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </button>
+        )}
+        <NodeActionsMenu id={id} data={data} />
       </div>
     </div>
   )

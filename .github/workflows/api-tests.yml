@@ -1,86 +1,301 @@
 name: Run Pytest
 
 on:
-  pull_request:
-    branches:
-      - main
+  workflow_call:
+    secrets:
+      CODECOV_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-tests-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  api-unit-plan:
+    name: Plan API unit shards
+    runs-on: depot-ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup UV and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: '3.13'
+          enable-cache: false
+      - name: Download shared timing baseline
+        # Public statistics are independent of PR refs and require no credentials.
+        run: |
+          if ! curl --fail --silent --show-error --location \
+            --connect-timeout 5 --max-time 15 --retry 2 --retry-max-time 30 \
+            https://raw.githubusercontent.com/langgenius/dify-test-infra/generated-stats/stats/test-times.json \
+            --output unit-test-durations.json; then
+            rm -f unit-test-durations.json
+            echo '::warning::Timing baseline unavailable; using round-robin file allocation.'
+          fi
+      - name: Freeze file assignments for every shard
+        run: |
+          uv run --project api --no-sync python api/dev/pytest_sharding.py \
+            --shard-index 1 --shard-total 2 \
+            --durations unit-test-durations.json \
+            --write-plan unit-test-plan.json \
+            --split-threshold 60 \
+            --ignore api/tests/unit_tests/controllers \
+            --ignore api/tests/e2e_tests/contracts/controllers \
+            api/tests/unit_tests \
+            api/tests/e2e_tests/contracts \
+            api/providers/vdb/*/tests/unit_tests \
+            api/providers/trace/*/tests/unit_tests
+      - name: Upload shared plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-unit-plan
+          path: |
+            unit-test-plan.json
+            unit-test-durations.json
+          retention-days: 7
+          if-no-files-found: error
+
+  api-unit:
+    needs: api-unit-plan
+    name: API Unit Tests (${{ matrix.python-version }}, shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    runs-on: depot-ubuntu-24.04-4
+    env:
+      PYTHONUNBUFFERED: '1'
+      COVERAGE_FILE: coverage-unit-${{ matrix.python-version }}-${{ matrix.shardIndex }}
+    defaults:
+      run:
+        shell: bash
     strategy:
+      fail-fast: false
       matrix:
         python-version:
-          - "3.10"
-          - "3.11"
-
-    env:
-      OPENAI_API_KEY: sk-IamNotARealKeyJustForMockTestKawaiiiiiiiiii
-      AZURE_OPENAI_API_BASE: https://difyai-openai.openai.azure.com
-      AZURE_OPENAI_API_KEY: xxxxb1707exxxxxxxxxxaaxxxxxf94
-      ANTHROPIC_API_KEY: sk-ant-api11-IamNotARealKeyJustForMockTestKawaiiiiiiiiii-NotBaka-ASkksz
-      CHATGLM_API_BASE: http://a.abc.com:11451
-      XINFERENCE_SERVER_URL: http://a.abc.com:11451
-      XINFERENCE_GENERATION_MODEL_UID: generate
-      XINFERENCE_CHAT_MODEL_UID: chat
-      XINFERENCE_EMBEDDINGS_MODEL_UID: embedding
-      XINFERENCE_RERANK_MODEL_UID: rerank
-      GOOGLE_API_KEY: abcdefghijklmnopqrstuvwxyz
-      HUGGINGFACE_API_KEY: hf-awuwuwuwuwuwuwuwuwuwuwuwuwuwuwuwuwu
-      HUGGINGFACE_TEXT_GEN_ENDPOINT_URL: a
-      HUGGINGFACE_TEXT2TEXT_GEN_ENDPOINT_URL: b
-      HUGGINGFACE_EMBEDDINGS_ENDPOINT_URL: c
-      MOCK_SWITCH: true
-      CODE_MAX_STRING_LENGTH: 80000
+          - '3.13'
+        shardIndex:
+          - 1
+          - 2
+        shardTotal:
+          - 2
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Weaviate
-        uses: hoverkraft-tech/compose-action@v2.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          compose-file: docker/docker-compose.middleware.yaml
-          services: weaviate
+          persist-credentials: false
 
-      - name: Set up Qdrant
-        uses: hoverkraft-tech/compose-action@v2.0.0
+      - name: Setup UV and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
-          compose-file: docker/docker-compose.qdrant.yaml
-          services: qdrant
-
-      - name: Set up Milvus
-        uses: hoverkraft-tech/compose-action@v2.0.0
-        with:
-          compose-file: docker/docker-compose.milvus.yaml
-          services: |
-            etcd
-            minio
-            milvus-standalone
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
+          enable-cache: true
           python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-          cache-dependency-path: |
-            ./api/requirements.txt
-            ./api/requirements-dev.txt
+          cache-dependency-glob: api/uv.lock
+
+      - name: Check UV lockfile
+        run: uv lock --project api --check
 
       - name: Install dependencies
-        run: pip install -r ./api/requirements.txt -r ./api/requirements-dev.txt
+        run: uv sync --project api --dev
 
-      - name: Run Unit tests
-        run: dev/pytest/pytest_unit_tests.sh
+      - name: Download shared plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: api-unit-plan
 
-      - name: Run ModelRuntime
-        run: dev/pytest/pytest_model_runtime.sh
+      - name: Run Unit Tests
+        run: |
+          uv run --project api python api/dev/pytest_sharding.py \
+            --plan unit-test-plan.json \
+            --shard-index "${{ matrix.shardIndex }}" \
+            --shard-total "${{ matrix.shardTotal }}" \
+            --ignore api/tests/unit_tests/controllers \
+            --ignore api/tests/e2e_tests/contracts/controllers \
+            api/tests/unit_tests \
+            api/tests/e2e_tests/contracts \
+            api/providers/vdb/*/tests/unit_tests \
+            api/providers/trace/*/tests/unit_tests > "$RUNNER_TEMP/unit-test-files.txt"
+          uv run --project api pytest \
+            -p no:benchmark \
+            --timeout "${PYTEST_TIMEOUT:-20}" \
+            -n auto \
+            -o 'addopts=-p no:opik -p no:langsmith_plugin --cov=./api --cov-branch --import-mode=importlib' \
+            --cov-report= \
+            --file-shard-plan unit-test-plan.json \
+            --shard-index "${{ matrix.shardIndex }}" \
+            --shard-total "${{ matrix.shardTotal }}" \
+            --write-test-durations "test-results/durations-${{ matrix.shardIndex }}.json" \
+            --junitxml=test-results/unit.xml \
+            "@$RUNNER_TEMP/unit-test-files.txt"
 
-      - name: Run Tool
-        run: dev/pytest/pytest_tools.sh
+      - name: Upload unit test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-test-results-unit-${{ matrix.python-version }}-${{ matrix.shardIndex }}
+          path: test-results/*.xml
+          if-no-files-found: warn
+          retention-days: 7
 
-      - name: Run Workflow
-        run: dev/pytest/pytest_workflow.sh
+      - name: Upload successful timing observations
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-unit-durations-${{ matrix.shardIndex }}
+          path: test-results/durations-*.json
+          retention-days: 7
+          if-no-files-found: error
 
-      - name: Run Vector Stores
-        run: dev/pytest/pytest_vdb.sh
+      - name: Generate coverage report
+        run: uv run --project api coverage xml -o coverage.xml
+
+      # Codecov combines all backend uploads under the same commit and api flag.
+      - name: Report coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ./coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+          flags: api
+          name: api-unit-${{ matrix.python-version }}-${{ matrix.shardIndex }}-${{ matrix.shardTotal }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  api-controllers:
+    name: API Controller Tests (3.13)
+    runs-on: depot-ubuntu-24.04-4
+    env:
+      PYTHONUNBUFFERED: '1'
+      COVERAGE_FILE: coverage-controllers-3.13
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup UV and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          python-version: '3.13'
+          cache-dependency-glob: api/uv.lock
+
+      - name: Check UV lockfile
+        run: uv lock --project api --check
+
+      - name: Install dependencies
+        run: uv sync --project api --dev
+
+      - name: Run Controller Tests
+        # Workers have separate Flask registries; keep collection separate from the other unit suites.
+        run: |
+          uv run --project api pytest \
+            -p no:benchmark \
+            --timeout "${PYTEST_TIMEOUT:-20}" \
+            -n auto \
+            -o 'addopts=-p no:opik -p no:langsmith_plugin --cov=./api --cov-branch --import-mode=importlib' \
+            --cov-report= \
+            --junitxml=test-results/controllers.xml \
+            api/tests/unit_tests/controllers \
+            api/tests/e2e_tests/contracts/controllers
+
+      - name: Upload controller test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-test-results-controllers-3.13
+          path: test-results/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Generate coverage report
+        run: uv run --project api coverage xml -o coverage.xml
+
+      # Codecov combines all backend uploads under the same commit and api flag.
+      - name: Report coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ./coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+          flags: api
+          name: api-controllers-3.13
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  api-integration:
+    name: API Integration Tests (${{ matrix.python-version }})
+    runs-on: depot-ubuntu-24.04-4
+    env:
+      COVERAGE_FILE: coverage-integration-${{ matrix.python-version }}
+      STORAGE_TYPE: opendal
+      OPENDAL_SCHEME: fs
+      OPENDAL_FS_ROOT: /tmp/dify-storage
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - '3.13'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup UV and Python
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-glob: api/uv.lock
+
+      - name: Check UV lockfile
+        run: uv lock --project api --check
+
+      - name: Install dependencies
+        run: uv sync --project api --dev
+
+      - name: Run Integration Tests
+        run: |
+          uv run --project api pytest \
+            -p no:benchmark \
+            --start-middleware \
+            --middleware-stop-timeout 2 \
+            -n auto \
+            -o 'addopts=-p no:opik -p no:langsmith_plugin --cov=./api --cov-branch --import-mode=importlib' \
+            --cov-report= \
+            --timeout "${PYTEST_TIMEOUT:-180}" \
+            --durations=50 \
+            --junitxml=test-results/integration.xml \
+            api/tests/e2e_tests/middleware/workflow \
+            api/tests/e2e_tests/middleware/tools \
+            api/tests/e2e_tests/containers
+
+      - name: Upload integration test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: api-test-results-integration-${{ matrix.python-version }}
+          path: test-results/*.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Generate coverage report
+        run: uv run --project api coverage xml -o coverage.xml
+
+      # Codecov combines all backend uploads under the same commit and api flag.
+      - name: Report coverage
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: ./coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+          flags: api
+          name: api-integration-${{ matrix.python-version }}
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

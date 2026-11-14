@@ -1,30 +1,10 @@
 import { useTranslation } from 'react-i18next'
-import { AlertCircle } from '@/app/components/base/icons/src/vender/solid/alertsAndFeedback'
-import { CheckCircle } from '@/app/components/base/icons/src/vender/solid/general'
-
-export const ValidatedErrorIcon = () => {
-  return <AlertCircle className='w-4 h-4 text-[#D92D20]' />
-}
-
-export const ValidatedSuccessIcon = () => {
-  return <CheckCircle className='w-4 h-4 text-[#039855]' />
-}
 
 export const ValidatingTip = () => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common'])
   return (
-    <div className={'mt-2 text-primary-600 text-xs font-normal'}>
-      {t('common.provider.validating')}
-    </div>
-  )
-}
-
-export const ValidatedErrorMessage = ({ errorMessage }: { errorMessage: string }) => {
-  const { t } = useTranslation()
-
-  return (
-    <div className={'mt-2 text-[#D92D20] text-xs font-normal'}>
-      {t('common.provider.validatedError')}{errorMessage}
+    <div className="mt-2 text-xs font-normal text-primary-600">
+      {t(($) => $['provider.validating'], { ns: 'common' })}
     </div>
   )
 }

@@ -1,7 +1,7 @@
-import concurrent
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from collections.abc import Mapping
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from typing import Any
 
 from flask import Flask, current_app
 
@@ -12,11 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 class ExternalDataFetch:
-    def fetch(self, tenant_id: str,
-              app_id: str,
-              external_data_tools: list[ExternalDataVariableEntity],
-              inputs: dict,
-              query: str) -> dict:
+    def fetch(
+        self,
+        tenant_id: str,
+        app_id: str,
+        external_data_tools: list[ExternalDataVariableEntity],
+        inputs: Mapping[str, Any],
+        query: str,
+    ) -> Mapping[str, Any]:
         """
         Fill in variable inputs from external data tools if exists.
 
@@ -27,35 +30,40 @@ class ExternalDataFetch:
         :param query: the query
         :return: the filled inputs
         """
-        results = {}
+        results: dict[str, Any] = {}
+        inputs = dict(inputs)
         with ThreadPoolExecutor() as executor:
             futures = {}
             for tool in external_data_tools:
-                future = executor.submit(
+                future: Future[tuple[str | None, str | None]] = executor.submit(
                     self._query_external_data_tool,
-                    current_app._get_current_object(),
+                    current_app._get_current_object(),  # type: ignore
                     tenant_id,
                     app_id,
                     tool,
                     inputs,
-                    query
+                    query,
                 )
 
                 futures[future] = tool
 
-            for future in concurrent.futures.as_completed(futures):
+            for future in as_completed(futures):
                 tool_variable, result = future.result()
-                results[tool_variable] = result
+                if tool_variable is not None:
+                    results[tool_variable] = result
 
         inputs.update(results)
         return inputs
 
-    def _query_external_data_tool(self, flask_app: Flask,
-                                  tenant_id: str,
-                                  app_id: str,
-                                  external_data_tool: ExternalDataVariableEntity,
-                                  inputs: dict,
-                                  query: str) -> tuple[Optional[str], Optional[str]]:
+    def _query_external_data_tool(
+        self,
+        flask_app: Flask,
+        tenant_id: str,
+        app_id: str,
+        external_data_tool: ExternalDataVariableEntity,
+        inputs: Mapping[str, Any],
+        query: str,
+    ) -> tuple[str | None, str | None]:
         """
         Query external data tool.
         :param flask_app: flask app
@@ -72,17 +80,10 @@ class ExternalDataFetch:
             tool_config = external_data_tool.config
 
             external_data_tool_factory = ExternalDataToolFactory(
-                name=tool_type,
-                tenant_id=tenant_id,
-                app_id=app_id,
-                variable=tool_variable,
-                config=tool_config
+                name=tool_type, tenant_id=tenant_id, app_id=app_id, variable=tool_variable, config=tool_config
             )
 
             # query external data tool
-            result = external_data_tool_factory.query(
-                inputs=inputs,
-                query=query
-            )
+            result = external_data_tool_factory.query(inputs=inputs, query=query)
 
             return tool_variable, result

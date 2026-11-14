@@ -1,31 +1,65 @@
 'use client'
-import type { FC } from 'react'
-import React, { useEffect, useRef, useState } from 'react'
-import { useBoolean, useHover } from 'ahooks'
-import cn from 'classnames'
+import type { FC, RefObject } from 'react'
+import type { Field, StructuredOutput } from '../../../llm/types'
+import type { NodeOutPutVar, ValueSelector, Var } from '@/app/components/workflow/types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@langgenius/dify-ui/input-group'
+import { Popover, PopoverContent, PopoverTrigger } from '@langgenius/dify-ui/popover'
+import { useHover } from 'ahooks'
+import { noop } from 'es-toolkit/function'
+import * as React from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { type NodeOutPutVar, type ValueSelector, type Var, VarType } from '@/app/components/workflow/types'
-import { Variable02 } from '@/app/components/base/icons/src/vender/solid/development'
-import { ChevronRight } from '@/app/components/base/icons/src/vender/line/arrows'
+import PickerStructurePanel from '@/app/components/workflow/nodes/_base/components/variable/object-child-tree-panel/picker'
+import { VariableIconWithColor } from '@/app/components/workflow/nodes/_base/components/variable/variable-label'
+import { VarType } from '@/app/components/workflow/types'
+import { Type } from '../../../llm/types'
+import ManageInputField from './manage-input-field'
+import { varTypeToStructType } from './utils'
 import {
-  PortalToFollowElem,
-  PortalToFollowElemContent,
-  PortalToFollowElemTrigger,
-} from '@/app/components/base/portal-to-follow-elem'
-import {
-  SearchLg,
-} from '@/app/components/base/icons/src/vender/line/general'
-import { XCircle } from '@/app/components/base/icons/src/vender/solid/general'
-import { checkKeys } from '@/utils/var'
+  filterReferenceVars,
+  getValueSelector,
+  getVariableCategory,
+  getVariableDisplayName,
+} from './var-reference-vars.helpers'
 
-type ObjectChildrenProps = {
+const VAR_SEARCH_INPUT_CLASS_NAME = 'var-search-input'
+export const VAR_REFERENCE_CHILD_POPUP_CLASS_NAME = 'var-reference-vars-child-popup'
+
+const resolveValueSelector = ({
+  itemData,
+  isFlat,
+  isSupportFileVar,
+  nodeId,
+  objPath,
+}: {
+  itemData: Var
+  isFlat?: boolean
+  isSupportFileVar?: boolean
   nodeId: string
-  title: string
-  data: Var[]
   objPath: string[]
-  onChange: (value: ValueSelector, item: Var) => void
-  onHovering?: (value: boolean) => void
-  itemWidth?: number
+}) => {
+  const isStructureOutput =
+    itemData.type === VarType.object && (itemData.children as StructuredOutput)?.schema?.properties
+  const isFile = itemData.type === VarType.file && !isStructureOutput
+  const isSys = itemData.variable.startsWith('sys.')
+  const isEnv = itemData.variable.startsWith('env.')
+  const isChatVar = itemData.variable.startsWith('conversation.')
+  const isRagVariable = itemData.isRagVariable
+
+  return getValueSelector({
+    itemData,
+    isFlat,
+    isSupportFileVar,
+    isFile,
+    isSys,
+    isEnv,
+    isChatVar,
+    isRagVariable,
+    nodeId,
+    objPath,
+  })
 }
 
 type ItemProps = {
@@ -36,6 +70,15 @@ type ItemProps = {
   onChange: (value: ValueSelector, item: Var) => void
   onHovering?: (value: boolean) => void
   itemWidth?: number
+  isSupportFileVar?: boolean
+  isException?: boolean
+  isLoopVar?: boolean
+  isFlat?: boolean
+  isInCodeGeneratorInstructionEditor?: boolean
+  className?: string
+  preferSchemaType?: boolean
+  isSelected?: boolean
+  onActivate?: () => void
 }
 
 const Item: FC<ItemProps> = ({
@@ -45,23 +88,101 @@ const Item: FC<ItemProps> = ({
   itemData,
   onChange,
   onHovering,
-  itemWidth,
+  isSupportFileVar,
+  isException,
+  isLoopVar,
+  isFlat,
+  isInCodeGeneratorInstructionEditor,
+  className,
+  preferSchemaType,
+  isSelected,
+  onActivate,
 }) => {
-  const isObj = itemData.type === VarType.object && itemData.children && itemData.children.length > 0
-  const itemRef = useRef(null)
+  const nestedVariableTypes: readonly VarType[] = [VarType.object, VarType.file]
+
+  const isStructureOutput =
+    itemData.type === VarType.object && (itemData.children as StructuredOutput)?.schema?.properties
+  const isObj =
+    nestedVariableTypes.includes(itemData.type) &&
+    itemData.children &&
+    (itemData.children as Var[]).length > 0
+  const isEnv = itemData.variable.startsWith('env.')
+  const isChatVar = itemData.variable.startsWith('conversation.')
+  const isRagVariable = itemData.isRagVariable
+  const flatVarIcon = useMemo(() => {
+    if (!isFlat) return null
+    const variable = itemData.variable
+    switch (variable) {
+      case 'current':
+        return (
+          <span
+            aria-hidden
+            className={cn(
+              'size-3.5 shrink-0 text-util-colors-violet-violet-600',
+              isInCodeGeneratorInstructionEditor
+                ? 'i-custom-vender-line-general-code-assistant'
+                : 'i-custom-vender-line-general-magic-edit',
+            )}
+          />
+        )
+      case 'error_message':
+        return (
+          <span
+            aria-hidden
+            className="i-custom-vender-solid-development-variable-02 size-3.5 shrink-0 text-util-colors-orange-dark-orange-dark-600"
+          />
+        )
+      default:
+        return (
+          <span
+            aria-hidden
+            className="i-custom-vender-solid-development-variable-02 size-3.5 shrink-0 text-text-accent"
+          />
+        )
+    }
+  }, [isFlat, isInCodeGeneratorInstructionEditor, itemData.variable])
+
+  const varName = useMemo(
+    () => getVariableDisplayName(itemData.variable, !!isFlat, isInCodeGeneratorInstructionEditor),
+    [isFlat, isInCodeGeneratorInstructionEditor, itemData.variable],
+  )
+
+  const objStructuredOutput: StructuredOutput | null = useMemo(() => {
+    if (!isObj) return null
+    const properties: Record<string, Field> = {}
+    const childrenVars = (itemData.children as Var[]) || []
+    childrenVars.forEach((c) => {
+      properties[c.variable] = {
+        type: varTypeToStructType(c.type),
+      }
+    })
+    return {
+      schema: {
+        type: Type.object,
+        properties,
+        required: [],
+        additionalProperties: false,
+      },
+    }
+  }, [isObj, itemData.children])
+
+  const structuredOutput = (() => {
+    if (isStructureOutput) return itemData.children as StructuredOutput
+    return objStructuredOutput
+  })()
+
+  const itemRef = useRef<HTMLDivElement>(null)
   const [isItemHovering, setIsItemHovering] = useState(false)
-  const _ = useHover(itemRef, {
+  useHover(itemRef, {
     onChange: (hovering) => {
       if (hovering) {
         setIsItemHovering(true)
-      }
-      else {
-        if (isObj) {
+      } else {
+        if (isObj || isStructureOutput) {
           setTimeout(() => {
             setIsItemHovering(false)
           }, 100)
-        }
-        else {
+        } else {
           setIsItemHovering(false)
         }
       }
@@ -69,234 +190,426 @@ const Item: FC<ItemProps> = ({
   })
   const [isChildrenHovering, setIsChildrenHovering] = useState(false)
   const isHovering = isItemHovering || isChildrenHovering
-  const open = isObj && isHovering
+  const open = (isObj || isStructureOutput) && isHovering
   useEffect(() => {
-    onHovering && onHovering(isHovering)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHovering])
+    onHovering?.(isHovering)
+  }, [isHovering, onHovering])
   const handleChosen = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (itemData.variable.startsWith('sys.')) { // system variable
-      onChange([...objPath, ...itemData.variable.split('.')], itemData)
-    }
-    else {
-      onChange([nodeId, ...objPath, itemData.variable], itemData)
-    }
+    e.nativeEvent.stopImmediatePropagation()
+    const valueSelector = resolveValueSelector({
+      itemData,
+      isFlat,
+      isSupportFileVar,
+      nodeId,
+      objPath,
+    })
+
+    if (valueSelector) onChange(valueSelector, itemData)
   }
-  return (
-    <PortalToFollowElem
-      open={open}
-      onOpenChange={() => { }}
-      placement='left-start'
+  const variableCategory = useMemo(
+    () => getVariableCategory({ isEnv, isChatVar, isLoopVar, isRagVariable }),
+    [isEnv, isChatVar, isLoopVar, isRagVariable],
+  )
+
+  const itemTrigger = (
+    <div
+      ref={itemRef}
+      className={cn(
+        isObj || isStructureOutput ? 'pr-1' : 'pr-4.5',
+        (isHovering || isSelected) &&
+          (isObj || isStructureOutput
+            ? 'bg-components-panel-on-panel-item-bg-hover'
+            : 'bg-state-base-hover'),
+        'relative flex h-6 w-full cursor-pointer items-center rounded-md pl-3 outline-hidden focus:outline-hidden focus-visible:outline-hidden',
+        className,
+      )}
+      data-selected={isSelected ? 'true' : 'false'}
+      onClick={handleChosen}
+      onMouseEnter={onActivate}
+      onMouseDown={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        e.nativeEvent.stopImmediatePropagation()
+      }}
     >
-      <PortalToFollowElemTrigger className='w-full'>
-        <div
-          ref={itemRef}
-          className={cn(
-            isObj ? ' pr-1' : 'pr-[18px]',
-            isHovering && (isObj ? 'bg-primary-50' : 'bg-gray-50'),
-            'relative w-full flex items-center h-6 pl-3  rounded-md cursor-pointer')
-          }
-          // style={{ width: itemWidth || 252 }}
-          onClick={handleChosen}
-        >
-          <div className='flex items-center w-0 grow'>
-            <Variable02 className='shrink-0 w-3.5 h-3.5 text-primary-500' />
-            <div title={itemData.variable} className='ml-1 w-0 grow truncate text-[13px] font-normal text-gray-900'>{itemData.variable}</div>
-          </div>
-          <div className='ml-1 shrink-0 text-xs font-normal text-gray-500 capitalize'>{itemData.type}</div>
-          {isObj && (
-            <ChevronRight className='ml-0.5 w-3 h-3 text-gray-500' />
-          )}
-        </div>
-      </PortalToFollowElemTrigger>
-      <PortalToFollowElemContent style={{
-        zIndex: 100,
-      }}>
-        {isObj && (
-          // eslint-disable-next-line @typescript-eslint/no-use-before-define
-          <ObjectChildren
-            nodeId={nodeId}
-            title={title}
-            objPath={[...objPath, itemData.variable]}
-            data={itemData.children as Var[]}
-            onChange={onChange}
-            onHovering={setIsChildrenHovering}
-            itemWidth={itemWidth}
+      <div className="flex w-0 grow items-center">
+        {!isFlat && (
+          <VariableIconWithColor
+            variables={itemData.variable.split('.')}
+            variableCategory={variableCategory}
+            isExceptionVariable={isException}
           />
         )}
-      </PortalToFollowElemContent>
-    </PortalToFollowElem>
-  )
-}
+        {isFlat && flatVarIcon}
 
-const ObjectChildren: FC<ObjectChildrenProps> = ({
-  title,
-  nodeId,
-  objPath,
-  data,
-  onChange,
-  onHovering,
-  itemWidth,
-}) => {
-  const currObjPath = objPath
-  const itemRef = useRef(null)
-  const [isItemHovering, setIsItemHovering] = useState(false)
-  const _ = useHover(itemRef, {
-    onChange: (hovering) => {
-      if (hovering) {
-        setIsItemHovering(true)
-      }
-      else {
-        setTimeout(() => {
-          setIsItemHovering(false)
-        }, 100)
-      }
-    },
-  })
-  const [isChildrenHovering, setIsChildrenHovering] = useState(false)
-  const isHovering = isItemHovering || isChildrenHovering
-  useEffect(() => {
-    onHovering && onHovering(isHovering)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHovering])
-  useEffect(() => {
-    onHovering && onHovering(isItemHovering)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isItemHovering])
-  // absolute top-[-2px]
-  return (
-    <div ref={itemRef} className=' bg-white rounded-lg border border-gray-200 shadow-lg space-y-1' style={{
-      right: itemWidth ? itemWidth - 10 : 215,
-      minWidth: 252,
-    }}>
-      <div className='flex items-center h-[22px] px-3 text-xs font-normal text-gray-700'><span className='text-gray-500'>{title}.</span>{currObjPath.join('.')}</div>
-      {
-        (data && data.length > 0)
-        && data.map((v, i) => (
-          <Item
-            key={i}
-            nodeId={nodeId}
-            title={title}
-            objPath={objPath}
-            itemData={v}
-            onChange={onChange}
-            onHovering={setIsChildrenHovering}
-          />
-        ))
-      }
+        {!isEnv && !isChatVar && !isRagVariable && (
+          <div
+            title={itemData.variable}
+            className="ml-1 w-0 grow truncate system-sm-medium text-text-secondary"
+          >
+            {varName}
+          </div>
+        )}
+        {isEnv && (
+          <div
+            title={itemData.variable}
+            className="ml-1 w-0 grow truncate system-sm-medium text-text-secondary"
+          >
+            {itemData.variable.replace('env.', '')}
+          </div>
+        )}
+        {isChatVar && (
+          <div
+            title={itemData.des}
+            className="ml-1 w-0 grow truncate system-sm-medium text-text-secondary"
+          >
+            {itemData.variable.replace('conversation.', '')}
+          </div>
+        )}
+        {isRagVariable && (
+          <div
+            title={itemData.des}
+            className="ml-1 w-0 grow truncate system-sm-medium text-text-secondary"
+          >
+            {itemData.variable.split('.').slice(-1)[0]}
+          </div>
+        )}
+      </div>
+      <div className="ml-1 shrink-0 text-xs font-normal text-text-tertiary capitalize">
+        {preferSchemaType && itemData.schemaType ? itemData.schemaType : itemData.type}
+      </div>
+      {(isObj || isStructureOutput) && (
+        <span
+          aria-hidden
+          className={cn(
+            'ml-0.5 i-custom-vender-line-arrows-chevron-right size-3 text-text-quaternary',
+            isHovering && 'text-text-tertiary',
+          )}
+        />
+      )}
     </div>
   )
-}
 
-type Props = {
-  hideSearch?: boolean
-  searchBoxClassName?: string
-  vars: NodeOutPutVar[]
-  onChange: (value: ValueSelector, item: Var) => void
-  itemWidth?: number
-}
-const VarReferenceVars: FC<Props> = ({
-  hideSearch,
-  searchBoxClassName,
-  vars,
-  onChange,
-  itemWidth,
-}) => {
-  const { t } = useTranslation()
-  const [searchText, setSearchText] = useState('')
-  const filteredVars = vars.filter((v) => {
-    const children = v.vars.filter(v => checkKeys([v.variable], false).isValid || v.variable.startsWith('sys.'))
-    return children.length > 0
-  }).filter((node) => {
-    if (!searchText)
-      return node
-    const children = node.vars.filter((v) => {
-      const searchTextLower = searchText.toLowerCase()
-      return v.variable.toLowerCase().includes(searchTextLower) || node.title.toLowerCase().includes(searchTextLower)
-    })
-    return children.length > 0
-  }).map((node) => {
-    let vars = node.vars.filter(v => checkKeys([v.variable], false).isValid || v.variable.startsWith('sys.'))
-    if (searchText) {
-      const searchTextLower = searchText.toLowerCase()
-      if (!node.title.toLowerCase().includes(searchTextLower))
-        vars = vars.filter(v => v.variable.toLowerCase().includes(searchText.toLowerCase()))
-    }
-
-    return {
-      ...node,
-      vars,
-    }
-  })
-  const [isFocus, {
-    setFalse: setBlur,
-    setTrue: setFocus,
-  }] = useBoolean(false)
   return (
-    <>
-      {
-        !hideSearch && (
-          <>
-            <div
-              className={cn(searchBoxClassName, isFocus && 'shadow-sm bg-white', 'mb-2 mx-1 flex items-center px-2 rounded-lg bg-gray-100 ')}
-              onClick={e => e.stopPropagation()}
-            >
-
-              <SearchLg className='shrink-0 ml-[1px] mr-[5px] w-3.5 h-3.5 text-gray-400' />
-              <input
-                value={searchText}
-                className='grow px-0.5 py-[7px] text-[13px] text-gray-700 bg-transparent appearance-none outline-none caret-primary-600 placeholder:text-gray-400'
-                placeholder={t('workflow.common.searchVar') || ''}
-                onChange={e => setSearchText(e.target.value)}
-                onFocus={setFocus}
-                onBlur={setBlur}
-                autoFocus
-              />
-              {
-                searchText && (
-                  <div
-                    className='flex items-center justify-center ml-[5px] w-[18px] h-[18px] cursor-pointer'
-                    onClick={() => setSearchText('')}
-                  >
-                    <XCircle className='w-[14px] h-[14px] text-gray-400' />
-                  </div>
-                )
-              }
-            </div>
-            <div className='h-[0.5px] bg-black/5 relative left-[-4px]' style={{
-              width: 'calc(100% + 8px)',
-            }}></div>
-          </>
-        )
-      }
-
-      {filteredVars.length > 0
-        ? <div className='max-h-[85vh] overflow-y-auto'>
-
-          {
-            filteredVars.map((item, i) => (
-              <div key={i}>
-                <div
-                  className='leading-[22px] px-3 text-xs font-medium text-gray-500 uppercase truncate'
-                  title={item.title}
-                >{item.title}</div>
-                {item.vars.map((v, j) => (
-                  <Item
-                    key={j}
-                    title={item.title}
-                    nodeId={item.nodeId}
-                    objPath={[]}
-                    itemData={v}
-                    onChange={onChange}
-                    itemWidth={itemWidth}
-                  />
-                ))}
-              </div>))
-          }
-        </div>
-        : <div className='pl-3 leading-[18px] text-xs font-medium text-gray-500 uppercase'>{t('workflow.common.noVar')}</div>}
-    </ >
+    <Popover open={open} onOpenChange={noop}>
+      <PopoverTrigger nativeButton={false} render={itemTrigger} />
+      <PopoverContent
+        side="left"
+        align="start"
+        sideOffset={0}
+        className={cn(
+          VAR_REFERENCE_CHILD_POPUP_CLASS_NAME,
+          'border-none bg-transparent p-0 shadow-none backdrop-blur-none',
+        )}
+      >
+        {(isStructureOutput || isObj) && (
+          <PickerStructurePanel
+            root={{
+              nodeId,
+              nodeName: title,
+              attrName: itemData.variable,
+              attrAlias: itemData.schemaType,
+            }}
+            payload={structuredOutput!}
+            onHovering={setIsChildrenHovering}
+            onSelect={(valueSelector) => {
+              onChange(valueSelector, itemData)
+            }}
+          />
+        )}
+      </PopoverContent>
+    </Popover>
   )
 }
+
+type Props = Readonly<{
+  searchText?: string
+  searchBoxClassName?: string
+  vars: NodeOutPutVar[]
+  isSupportFileVar?: boolean
+  onChange: (value: ValueSelector, item: Var) => void
+  itemWidth?: number
+  maxHeightClass?: string
+  onClose?: () => void
+  onBlur?: () => void
+  isInCodeGeneratorInstructionEditor?: boolean
+  showManageInputField?: boolean
+  onManageInputField?: () => void
+  searchInputRef?: RefObject<HTMLInputElement | null>
+  preferSchemaType?: boolean
+}> &
+  (
+    | { hideSearch: true; keyboardTarget: HTMLElement | RefObject<HTMLElement | null> | null }
+    | { hideSearch?: false; keyboardTarget?: never }
+  )
+const VarReferenceVars: FC<Props> = ({
+  hideSearch,
+  keyboardTarget,
+  searchText,
+  searchBoxClassName,
+  vars,
+  isSupportFileVar,
+  onChange,
+  itemWidth,
+  maxHeightClass,
+  onClose,
+  onBlur,
+  isInCodeGeneratorInstructionEditor,
+  showManageInputField,
+  onManageInputField,
+  searchInputRef: externalSearchInputRef,
+  preferSchemaType,
+}) => {
+  const { t } = useTranslation(['common', 'workflow', 'workflowDebug'])
+  const [internalSearchValue, setInternalSearchValue] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
+  const internalSearchInputRef = useRef<HTMLInputElement>(null)
+  const searchInputRef = externalSearchInputRef ?? internalSearchInputRef
+  const searchValue = searchText ?? internalSearchValue
+  const searchLabel = t(($) => $['common.searchVar'], { ns: 'workflow' })
+  const filteredVars = useMemo(() => filterReferenceVars(vars, searchValue), [vars, searchValue])
+  const selectableItems = useMemo(() => {
+    return filteredVars.flatMap((node) =>
+      node.vars.map((item) => ({
+        nodeId: node.nodeId,
+        isFlat: node.isFlat,
+        itemData: item,
+      })),
+    )
+  }, [filteredVars])
+  const indexedFilteredVars = useMemo(() => {
+    let optionIndex = 0
+
+    return filteredVars.map((node) => ({
+      ...node,
+      vars: node.vars.map((variable) => ({
+        variable,
+        optionIndex: optionIndex++,
+      })),
+    }))
+  }, [filteredVars])
+  const [selectedIndex, setSelectedIndex] = useState(-1)
+  const effectiveSelectedIndex = selectableItems.length
+    ? Math.min(Math.max(selectedIndex, 0), selectableItems.length - 1)
+    : -1
+
+  useEffect(() => {
+    const listElement = listRef.current
+    const selectedElement = listElement?.querySelector(
+      '[data-selected="true"]',
+    ) as HTMLElement | null
+    if (!listElement || !selectedElement) return
+
+    const selectedTop = selectedElement.offsetTop
+    const selectedBottom = selectedTop + selectedElement.offsetHeight
+    const visibleTop = listElement.scrollTop
+    const visibleBottom = visibleTop + listElement.clientHeight
+
+    if (selectedTop < visibleTop) listElement.scrollTop = selectedTop
+    else if (selectedBottom > visibleBottom)
+      listElement.scrollTop = selectedBottom - listElement.clientHeight
+  }, [effectiveSelectedIndex])
+
+  const selectItem = useCallback(
+    (index: number) => {
+      const selectedItem = selectableItems[index]
+      if (!selectedItem) return
+
+      const { itemData, nodeId, isFlat } = selectedItem
+      const valueSelector = resolveValueSelector({
+        itemData,
+        isFlat,
+        isSupportFileVar,
+        nodeId,
+        objPath: [],
+      })
+
+      if (valueSelector) onChange(valueSelector, itemData)
+    },
+    [isSupportFileVar, onChange, selectableItems],
+  )
+
+  const handleKeyboardEvent = useCallback(
+    (event: Pick<KeyboardEvent, 'key' | 'preventDefault' | 'stopPropagation'>) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose?.()
+        return
+      }
+
+      if (!selectableItems.length) return
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        event.stopPropagation()
+        setSelectedIndex(
+          event.key === 'ArrowDown'
+            ? Math.min(effectiveSelectedIndex + 1, selectableItems.length - 1)
+            : Math.max(effectiveSelectedIndex - 1, 0),
+        )
+        return
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault()
+        event.stopPropagation()
+        selectItem(effectiveSelectedIndex)
+      }
+    },
+    [effectiveSelectedIndex, onClose, selectableItems.length, selectItem],
+  )
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.defaultPrevented || e.nativeEvent.isComposing) return
+      handleKeyboardEvent(e)
+    },
+    [handleKeyboardEvent],
+  )
+
+  useEffect(() => {
+    if (!hideSearch || !keyboardTarget) return
+    const target = 'current' in keyboardTarget ? keyboardTarget.current : keyboardTarget
+    if (!target) return
+
+    const handleTargetKeyDown = (event: KeyboardEvent) => {
+      if (
+        !(event.target instanceof Node) ||
+        !target.contains(event.target) ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey
+      )
+        return
+      if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(event.key)) return
+
+      handleKeyboardEvent(event)
+    }
+
+    // Run before React's node-movement capture handler while claiming only the declared owner.
+    const ownerDocument = target.ownerDocument
+    ownerDocument.addEventListener('keydown', handleTargetKeyDown, true)
+    return () => ownerDocument.removeEventListener('keydown', handleTargetKeyDown, true)
+  }, [handleKeyboardEvent, hideSearch, keyboardTarget])
+
+  return (
+    <>
+      {!hideSearch && (
+        <>
+          <InputGroup
+            className={cn('m-2 w-auto', searchBoxClassName)}
+            onClick={(event) => event.stopPropagation()}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) onBlur?.()
+            }}
+          >
+            <InputGroupInput
+              ref={searchInputRef}
+              type="search"
+              aria-label={searchLabel}
+              autoComplete="off"
+              className={cn(
+                VAR_SEARCH_INPUT_CLASS_NAME,
+                '[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none',
+              )}
+              value={searchValue}
+              placeholder={searchLabel}
+              onValueChange={setInternalSearchValue}
+              onKeyDown={handleKeyDown}
+            />
+            <InputGroupAddon className="ps-2 pe-0.5">
+              <span
+                aria-hidden="true"
+                className="i-ri-search-line size-4 text-components-input-text-placeholder"
+              />
+            </InputGroupAddon>
+            {!!searchValue && (
+              <InputGroupAddon align="inline-end" className="ps-0.5 pe-2">
+                <IconButton
+                  size="xs"
+                  aria-label={t(($) => $['operation.clear'], { ns: 'common' })}
+                  className="text-text-quaternary hover:bg-transparent hover:text-text-tertiary focus-visible:bg-components-input-bg-hover focus-visible:ring-inset"
+                  onClick={() => {
+                    setInternalSearchValue('')
+                    searchInputRef.current?.focus()
+                  }}
+                >
+                  <span aria-hidden="true" className="i-ri-close-circle-fill size-3.5" />
+                </IconButton>
+              </InputGroupAddon>
+            )}
+          </InputGroup>
+          <div
+            className="relative -left-1 h-[0.5px] bg-black/5"
+            style={{
+              width: 'calc(100% + 8px)',
+            }}
+          ></div>
+        </>
+      )}
+
+      {filteredVars.length > 0 ? (
+        <div
+          ref={listRef}
+          className={cn('max-h-[85vh] overflow-x-hidden overflow-y-auto', maxHeightClass)}
+        >
+          {indexedFilteredVars.map((item, i) => (
+            <div
+              key={item.nodeId}
+              className={cn(!item.isFlat && 'mt-3', i === 0 && item.isFlat && 'mt-2')}
+            >
+              {!item.isFlat && (
+                <div
+                  className="truncate px-3 system-xs-medium-uppercase leading-5.5 text-text-tertiary"
+                  title={item.title}
+                >
+                  {item.title}
+                </div>
+              )}
+              {item.vars.map(({ variable, optionIndex }) => (
+                <Item
+                  key={optionIndex}
+                  title={item.title}
+                  nodeId={item.nodeId}
+                  objPath={[]}
+                  itemData={variable}
+                  onChange={onChange}
+                  itemWidth={itemWidth}
+                  isSupportFileVar={isSupportFileVar}
+                  isException={variable.isException}
+                  isLoopVar={item.isLoop}
+                  isFlat={item.isFlat}
+                  isInCodeGeneratorInstructionEditor={isInCodeGeneratorInstructionEditor}
+                  preferSchemaType={preferSchemaType}
+                  isSelected={effectiveSelectedIndex === optionIndex}
+                  onActivate={() => setSelectedIndex(optionIndex)}
+                />
+              ))}
+              {item.isFlat &&
+                !indexedFilteredVars[i + 1]?.isFlat &&
+                !!indexedFilteredVars.find((item) => !item.isFlat) && (
+                  <div className="relative mt-3.5 flex items-center space-x-1">
+                    <div className="h-0 w-3 shrink-0 border border-divider-subtle"></div>
+                    <div className="system-2xs-semibold-uppercase text-text-tertiary">
+                      {t(($) => $['debug.lastOutput'], { ns: 'workflowDebug' })}
+                    </div>
+                    <div className="h-0 shrink-0 grow border border-divider-subtle"></div>
+                  </div>
+                )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 pl-3 text-xs leading-4.5 font-medium text-gray-500 uppercase">
+          {t(($) => $['common.noVar'], { ns: 'workflow' })}
+        </div>
+      )}
+      {showManageInputField && <ManageInputField onManage={onManageInputField || noop} />}
+    </>
+  )
+}
+
 export default React.memo(VarReferenceVars)

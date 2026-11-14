@@ -1,6 +1,8 @@
 import logging
 import os
+from typing import override
 
+from configs import dify_config
 from core.rag.extractor.extractor_base import BaseExtractor
 from core.rag.models.document import Document
 
@@ -8,25 +10,23 @@ logger = logging.getLogger(__name__)
 
 
 class UnstructuredWordExtractor(BaseExtractor):
-    """Loader that uses unstructured to load word documents.
-    """
+    """Loader that uses unstructured to load word documents."""
 
-    def __init__(
-            self,
-            file_path: str,
-            api_url: str,
-    ):
+    def __init__(self, file_path: str, api_url: str, api_key: str = ""):
         """Initialize with file path."""
         self._file_path = file_path
         self._api_url = api_url
+        self._api_key = api_key
 
+    @override
     def extract(self) -> list[Document]:
         from unstructured.__version__ import __version__ as __unstructured_version__
-        from unstructured.file_utils.filetype import FileType, detect_filetype
-
-        unstructured_version = tuple(
-            [int(x) for x in __unstructured_version__.split(".")]
+        from unstructured.file_utils.filetype import (
+            FileType,
+            detect_filetype,
         )
+
+        unstructured_version = tuple(int(x) for x in __unstructured_version__.split("."))
         # check the file extension
         try:
             import magic  # noqa: F401
@@ -44,16 +44,19 @@ class UnstructuredWordExtractor(BaseExtractor):
             )
 
         if is_doc:
-            from unstructured.partition.doc import partition_doc
+            from unstructured.partition.api import partition_via_api
 
-            elements = partition_doc(filename=self._file_path)
+            elements = partition_via_api(filename=self._file_path, api_url=self._api_url, api_key=self._api_key)
+
         else:
             from unstructured.partition.docx import partition_docx
 
             elements = partition_docx(filename=self._file_path)
 
         from unstructured.chunking.title import chunk_by_title
-        chunks = chunk_by_title(elements, max_characters=2000, combine_text_under_n_chars=2000)
+
+        max_characters = dify_config.INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH
+        chunks = chunk_by_title(elements, max_characters=max_characters, combine_text_under_n_chars=max_characters)
         documents = []
         for chunk in chunks:
             text = chunk.text.strip()

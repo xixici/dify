@@ -1,9 +1,14 @@
-from enum import Enum
-from typing import Any, Optional
+from enum import StrEnum, auto
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from core.model_runtime.entities.message_entities import PromptMessageRole
+from core.rag.data_post_processor.data_post_processor import RerankingModelDict, WeightsDict
+from core.rag.entities import MetadataFilteringCondition
+from graphon.file import FileUploadConfig
+from graphon.model_runtime.entities.llm_entities import LLMMode
+from graphon.model_runtime.entities.message_entities import PromptMessageRole
+from graphon.variables.input_entities import VariableEntity as WorkflowVariableEntity
 from models.model import AppMode
 
 
@@ -11,17 +16,19 @@ class ModelConfigEntity(BaseModel):
     """
     Model Config Entity.
     """
+
     provider: str
     model: str
-    mode: Optional[str] = None
-    parameters: dict[str, Any] = {}
-    stop: list[str] = []
+    mode: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    stop: list[str] = Field(default_factory=list)
 
 
 class AdvancedChatMessageEntity(BaseModel):
     """
     Advanced Chat Message Entity.
     """
+
     text: str
     role: PromptMessageRole
 
@@ -30,6 +37,7 @@ class AdvancedChatPromptTemplateEntity(BaseModel):
     """
     Advanced Chat Prompt Template Entity.
     """
+
     messages: list[AdvancedChatMessageEntity]
 
 
@@ -42,11 +50,12 @@ class AdvancedCompletionPromptTemplateEntity(BaseModel):
         """
         Role Prefix Entity.
         """
+
         user: str
         assistant: str
 
     prompt: str
-    role_prefix: Optional[RolePrefixEntity] = None
+    role_prefix: RolePrefixEntity | None = None
 
 
 class PromptTemplateEntity(BaseModel):
@@ -54,16 +63,17 @@ class PromptTemplateEntity(BaseModel):
     Prompt Template Entity.
     """
 
-    class PromptType(Enum):
+    class PromptType(StrEnum):
         """
         Prompt Type.
         'simple', 'advanced'
         """
-        SIMPLE = 'simple'
-        ADVANCED = 'advanced'
+
+        SIMPLE = auto()
+        ADVANCED = auto()
 
         @classmethod
-        def value_of(cls, value: str) -> 'PromptType':
+        def value_of(cls, value: str):
             """
             Get value of given mode.
 
@@ -73,55 +83,39 @@ class PromptTemplateEntity(BaseModel):
             for mode in cls:
                 if mode.value == value:
                     return mode
-            raise ValueError(f'invalid prompt type value {value}')
+            raise ValueError(f"invalid prompt type value {value}")
 
     prompt_type: PromptType
-    simple_prompt_template: Optional[str] = None
-    advanced_chat_prompt_template: Optional[AdvancedChatPromptTemplateEntity] = None
-    advanced_completion_prompt_template: Optional[AdvancedCompletionPromptTemplateEntity] = None
+    simple_prompt_template: str | None = None
+    advanced_chat_prompt_template: AdvancedChatPromptTemplateEntity | None = None
+    advanced_completion_prompt_template: AdvancedCompletionPromptTemplateEntity | None = None
 
 
-class VariableEntity(BaseModel):
+class RagPipelineVariableEntity(WorkflowVariableEntity):
     """
-    Variable Entity.
+    Rag Pipeline Variable Entity.
     """
-    class Type(Enum):
-        TEXT_INPUT = 'text-input'
-        SELECT = 'select'
-        PARAGRAPH = 'paragraph'
-        NUMBER = 'number'
 
-        @classmethod
-        def value_of(cls, value: str) -> 'VariableEntity.Type':
-            """
-            Get value of given mode.
-
-            :param value: mode value
-            :return: mode
-            """
-            for mode in cls:
-                if mode.value == value:
-                    return mode
-            raise ValueError(f'invalid variable type value {value}')
-
-    variable: str
-    label: str
-    description: Optional[str] = None
-    type: Type
-    required: bool = False
-    max_length: Optional[int] = None
-    options: Optional[list[str]] = None
-    default: Optional[str] = None
-    hint: Optional[str] = None
+    tooltips: str | None = None
+    placeholder: str | None = None
+    belong_to_node_id: str
 
 
 class ExternalDataVariableEntity(BaseModel):
     """
     External Data Variable Entity.
     """
+
     variable: str
     type: str
-    config: dict[str, Any] = {}
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelConfig(BaseModel):
+    provider: str
+    name: str
+    mode: LLMMode
+    completion_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class DatasetRetrieveConfigEntity(BaseModel):
@@ -129,16 +123,17 @@ class DatasetRetrieveConfigEntity(BaseModel):
     Dataset Retrieve Config Entity.
     """
 
-    class RetrieveStrategy(Enum):
+    class RetrieveStrategy(StrEnum):
         """
         Dataset Retrieve Strategy.
         'single' or 'multiple'
         """
-        SINGLE = 'single'
-        MULTIPLE = 'multiple'
+
+        SINGLE = auto()
+        MULTIPLE = auto()
 
         @classmethod
-        def value_of(cls, value: str) -> 'RetrieveStrategy':
+        def value_of(cls, value: str):
             """
             Get value of given mode.
 
@@ -148,20 +143,27 @@ class DatasetRetrieveConfigEntity(BaseModel):
             for mode in cls:
                 if mode.value == value:
                     return mode
-            raise ValueError(f'invalid retrieve strategy value {value}')
+            raise ValueError(f"invalid retrieve strategy value {value}")
 
-    query_variable: Optional[str] = None  # Only when app mode is completion
+    query_variable: str | None = None  # Only when app mode is completion
 
     retrieve_strategy: RetrieveStrategy
-    top_k: Optional[int] = None
-    score_threshold: Optional[float] = None
-    reranking_model: Optional[dict] = None
+    top_k: int | None = None
+    score_threshold: float | None = 0.0
+    rerank_mode: str | None = "reranking_model"
+    reranking_model: RerankingModelDict | None = None
+    weights: WeightsDict | None = None
+    reranking_enabled: bool | None = True
+    metadata_filtering_mode: Literal["disabled", "automatic", "manual"] | None = "disabled"
+    metadata_model_config: ModelConfig | None = None
+    metadata_filtering_conditions: MetadataFilteringCondition | None = None
 
 
 class DatasetEntity(BaseModel):
     """
     Dataset Config Entity.
     """
+
     dataset_ids: list[str]
     retrieve_config: DatasetRetrieveConfigEntity
 
@@ -170,68 +172,78 @@ class SensitiveWordAvoidanceEntity(BaseModel):
     """
     Sensitive Word Avoidance Entity.
     """
+
     type: str
-    config: dict[str, Any] = {}
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class TextToSpeechEntity(BaseModel):
     """
     Sensitive Word Avoidance Entity.
     """
+
     enabled: bool
-    voice: Optional[str] = None
-    language: Optional[str] = None
+    voice: str | None = None
+    language: str | None = None
 
 
-class FileExtraConfig(BaseModel):
+class TracingConfigEntity(BaseModel):
     """
-    File Upload Entity.
+    Tracing Config Entity.
     """
-    image_config: Optional[dict[str, Any]] = None
+
+    enabled: bool
+    tracing_provider: str
 
 
 class AppAdditionalFeatures(BaseModel):
-    file_upload: Optional[FileExtraConfig] = None
-    opening_statement: Optional[str] = None
+    file_upload: FileUploadConfig | None = None
+    opening_statement: str | None = None
     suggested_questions: list[str] = []
     suggested_questions_after_answer: bool = False
     show_retrieve_source: bool = False
     more_like_this: bool = False
     speech_to_text: bool = False
-    text_to_speech: Optional[TextToSpeechEntity] = None
+    text_to_speech: TextToSpeechEntity | None = None
+    trace_config: TracingConfigEntity | None = None
 
 
 class AppConfig(BaseModel):
     """
     Application Config Entity.
     """
+
     tenant_id: str
     app_id: str
     app_mode: AppMode
-    additional_features: AppAdditionalFeatures
-    variables: list[VariableEntity] = []
-    sensitive_word_avoidance: Optional[SensitiveWordAvoidanceEntity] = None
+    additional_features: AppAdditionalFeatures | None = None
+    variables: list[WorkflowVariableEntity] = []
+    sensitive_word_avoidance: SensitiveWordAvoidanceEntity | None = None
 
 
-class EasyUIBasedAppModelConfigFrom(Enum):
+class EasyUIBasedAppModelConfigFrom(StrEnum):
     """
     App Model Config From.
     """
-    ARGS = 'args'
-    APP_LATEST_CONFIG = 'app-latest-config'
-    CONVERSATION_SPECIFIC_CONFIG = 'conversation-specific-config'
+
+    ARGS = auto()
+    APP_LATEST_CONFIG = "app-latest-config"
+    CONVERSATION_SPECIFIC_CONFIG = "conversation-specific-config"
 
 
 class EasyUIBasedAppConfig(AppConfig):
     """
     Easy UI Based App Config Entity.
     """
+
     app_model_config_from: EasyUIBasedAppModelConfigFrom
-    app_model_config_id: str
-    app_model_config_dict: dict
+    # Optional: an Agent App has no legacy app_model_config row, so the id may be
+    # absent (persistence then stores NULL for the conversation's id).
+    app_model_config_id: str | None = None
+    app_model_config_dict: dict[str, Any]
     model: ModelConfigEntity
     prompt_template: PromptTemplateEntity
-    dataset: Optional[DatasetEntity] = None
+    dataset: DatasetEntity | None = None
     external_data_variables: list[ExternalDataVariableEntity] = []
 
 
@@ -239,4 +251,5 @@ class WorkflowUIBasedAppConfig(AppConfig):
     """
     Workflow UI Based App Config Entity.
     """
+
     workflow_id: str

@@ -1,43 +1,40 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
-import cn from 'classnames'
-import { HelpCircle } from '@/app/components/base/icons/src/vender/line/general'
-import Tooltip from '@/app/components/base/tooltip'
-type Props = {
+import { cn } from '@langgenius/dify-ui/cn'
+import { Infotip, InfotipContent, InfotipTrigger } from '@langgenius/dify-ui/infotip'
+import * as React from 'react'
+
+type Props = Readonly<{
   className?: string
-  icon: JSX.Element
+  icon: React.JSX.Element
   name: string
   description: string
-  children: JSX.Element
-}
+  children: React.JSX.Element
+}>
 
-const ItemPanel: FC<Props> = ({
-  className,
-  icon,
-  name,
-  description,
-  children,
-}) => {
+const ItemPanel: FC<Props> = ({ className, icon, name, description, children }) => {
+  const titleId = React.useId()
+
   return (
-    <div className={cn(className, 'flex justify-between items-center h-12 px-3 rounded-lg bg-gray-50')}>
-      <div className='flex items-center'>
+    <div
+      className={cn(
+        className,
+        'flex h-12 items-center justify-between rounded-lg bg-background-section-burn px-3',
+      )}
+    >
+      <div className="flex items-center">
         {icon}
-        <div className='ml-3 mr-1 leading-6 text-sm font-semibold text-gray-800'>{name}</div>
-        <Tooltip
-          htmlContent={
-            <div className='w-[180px]'>
-              {description}
-            </div>
-          }
-          selector={`agent-setting-tooltip-${name}`}
-        >
-          <HelpCircle className='w-[14px] h-[14px] text-gray-400' />
-        </Tooltip>
+        <div id={titleId} className="mr-1 ml-3 text-sm/6 font-semibold text-text-secondary">
+          {name}
+        </div>
+        <Infotip>
+          <InfotipTrigger aria-labelledby={titleId} />
+          <InfotipContent aria-labelledby={titleId} className="w-45">
+            {description}
+          </InfotipContent>
+        </Infotip>
       </div>
-      <div>
-        {children}
-      </div>
+      <div>{children}</div>
     </div>
   )
 }

@@ -1,104 +1,154 @@
+from typing import Annotated
 
-from flask import current_app
-from flask_restful import Resource, fields, marshal_with
+from flask_restx import Resource
+from pydantic import Field, WithJsonSchema
 
-from controllers.service_api import api
-from controllers.service_api.app.error import AppUnavailableError
+from controllers.common.fields import Parameters
+from controllers.common.schema import register_response_schema_models
+from controllers.service_api import service_api_ns
+from controllers.service_api.app.error import AgentNotPublishedError, AppUnavailableError
 from controllers.service_api.wraps import validate_app_token
-from models.model import App, AppMode
-from services.app_service import AppService
+from extensions.ext_application_services import application_services
+from fields.base import ResponseModel
+from libs.external_api import error_responses
+from libs.helper import dump_response
+from models.model import App
+from services.app_definition_query_service import AppDefinitionNotPublishedError, AppDefinitionUnavailableError
 
 
+class AppInfoResponse(ResponseModel):
+    name: str
+    description: str | None
+    tags: list[str]
+    mode: str
+    author_name: str | None
+
+
+URLString = Annotated[str, WithJsonSchema({"format": "url", "type": "string"})]
+
+
+class ToolIcon(ResponseModel):
+    background: str
+    content: str
+
+
+class AppMetaResponse(ResponseModel):
+    tool_icons: dict[str, URLString | ToolIcon] = Field(default_factory=dict)
+
+
+register_response_schema_models(service_api_ns, Parameters, AppMetaResponse, AppInfoResponse)
+
+
+@service_api_ns.route("/parameters")
 class AppParameterApi(Resource):
     """Resource for app variables."""
 
-    variable_fields = {
-        'key': fields.String,
-        'name': fields.String,
-        'description': fields.String,
-        'type': fields.String,
-        'default': fields.String,
-        'max_length': fields.Integer,
-        'options': fields.List(fields.String)
-    }
-
-    system_parameters_fields = {
-        'image_file_size_limit': fields.String
-    }
-
-    parameters_fields = {
-        'opening_statement': fields.String,
-        'suggested_questions': fields.Raw,
-        'suggested_questions_after_answer': fields.Raw,
-        'speech_to_text': fields.Raw,
-        'text_to_speech': fields.Raw,
-        'retriever_resource': fields.Raw,
-        'annotation_reply': fields.Raw,
-        'more_like_this': fields.Raw,
-        'user_input_form': fields.Raw,
-        'sensitive_word_avoidance': fields.Raw,
-        'file_upload': fields.Raw,
-        'system_parameters': fields.Nested(system_parameters_fields)
-    }
-
-    @validate_app_token
-    @marshal_with(parameters_fields)
-    def get(self, app_model: App):
-        """Retrieve app parameters."""
-        if app_model.mode in [AppMode.ADVANCED_CHAT.value, AppMode.WORKFLOW.value]:
-            workflow = app_model.workflow
-            if workflow is None:
-                raise AppUnavailableError()
-
-            features_dict = workflow.features_dict
-            user_input_form = workflow.user_input_form(to_old_structure=True)
-        else:
-            app_model_config = app_model.app_model_config
-            features_dict = app_model_config.to_dict()
-
-            user_input_form = features_dict.get('user_input_form', [])
-
-        return {
-            'opening_statement': features_dict.get('opening_statement'),
-            'suggested_questions': features_dict.get('suggested_questions', []),
-            'suggested_questions_after_answer': features_dict.get('suggested_questions_after_answer',
-                                                                  {"enabled": False}),
-            'speech_to_text': features_dict.get('speech_to_text', {"enabled": False}),
-            'text_to_speech': features_dict.get('text_to_speech', {"enabled": False}),
-            'retriever_resource': features_dict.get('retriever_resource', {"enabled": False}),
-            'annotation_reply': features_dict.get('annotation_reply', {"enabled": False}),
-            'more_like_this': features_dict.get('more_like_this', {"enabled": False}),
-            'user_input_form': user_input_form,
-            'sensitive_word_avoidance': features_dict.get('sensitive_word_avoidance',
-                                                          {"enabled": False, "type": "", "configs": []}),
-            'file_upload': features_dict.get('file_upload', {"image": {
-                                                     "enabled": False,
-                                                     "number_limits": 3,
-                                                     "detail": "high",
-                                                     "transfer_methods": ["remote_url", "local_file"]
-                                                 }}),
-            'system_parameters': {
-                'image_file_size_limit': current_app.config.get('UPLOAD_IMAGE_FILE_SIZE_LIMIT')
-            }
+    @error_responses(AgentNotPublishedError, AppUnavailableError)
+    @service_api_ns.doc(
+        summary="Get App Parameters",
+        description=(
+            "Retrieve the application's input form configuration, including feature switches, input "
+            "parameter names, types, and default values."
+        ),
+        tags=["Applications"],
+        responses={
+            200: "Application parameters information.",
+            400: "`app_unavailable` : App unavailable or misconfigured.",
+        },
+    )
+    @service_api_ns.doc("get_app_parameters")
+    @service_api_ns.doc(description="Retrieve application input parameters and configuration")
+    @service_api_ns.doc(
+        responses={
+            200: "Parameters retrieved successfully",
+            401: "Unauthorized - invalid API token",
         }
+    )
+    @service_api_ns.response(200, "Parameters retrieved successfully", service_api_ns.models[Parameters.__name__])
+    @validate_app_token
+    def get(self, app_model: App):
+        """Retrieve app parameters.
+
+        Returns the input form parameters and configuration for the application.
+        """
+        try:
+            parameters = application_services().app_definitions.get_public_parameters(app_model.id)
+        except AppDefinitionNotPublishedError:
+            raise AgentNotPublishedError() from None
+        except AppDefinitionUnavailableError:
+            raise AppUnavailableError() from None
+
+        return dump_response(Parameters, parameters)
 
 
+@service_api_ns.route("/meta")
 class AppMetaApi(Resource):
+    @error_responses(AppUnavailableError)
+    @service_api_ns.doc(
+        summary="Get App Meta",
+        description="Retrieve metadata about this application, including tool icons and other configuration details.",
+        tags=["Applications"],
+        responses={
+            200: "Successfully retrieved application meta information.",
+            400: "`app_unavailable` : App unavailable or misconfigured.",
+        },
+    )
+    @service_api_ns.doc("get_app_meta")
+    @service_api_ns.doc(description="Get application metadata")
+    @service_api_ns.doc(
+        responses={
+            200: "Metadata retrieved successfully",
+            401: "Unauthorized - invalid API token",
+        }
+    )
+    @service_api_ns.response(200, "Metadata retrieved successfully", service_api_ns.models[AppMetaResponse.__name__])
     @validate_app_token
     def get(self, app_model: App):
-        """Get app meta"""
-        return AppService().get_app_meta(app_model)
+        """Get app metadata.
 
+        Returns metadata about the application including configuration and settings.
+        """
+        try:
+            tool_icons = application_services().app_definitions.get_tool_icons(app_model.id)
+        except AppDefinitionUnavailableError:
+            raise AppUnavailableError() from None
+
+        return dump_response(AppMetaResponse, {"tool_icons": tool_icons})
+
+
+@service_api_ns.route("/info")
 class AppInfoApi(Resource):
+    @error_responses(AppUnavailableError)
+    @service_api_ns.doc(
+        summary="Get App Info",
+        description="Retrieve basic information about this application, including name, description, tags, and mode.",
+        tags=["Applications"],
+        responses={
+            200: "Basic information of the application.",
+            400: "`app_unavailable` : App unavailable or misconfigured.",
+        },
+    )
+    @service_api_ns.doc("get_app_info")
+    @service_api_ns.doc(description="Get basic application information")
+    @service_api_ns.doc(
+        responses={
+            200: "Application info retrieved successfully",
+            401: "Unauthorized - invalid API token",
+        }
+    )
+    @service_api_ns.response(
+        200,
+        "Application info retrieved successfully",
+        service_api_ns.models[AppInfoResponse.__name__],
+    )
     @validate_app_token
     def get(self, app_model: App):
-        """Get app infomation"""
-        return {
-            'name':app_model.name,
-            'description':app_model.description
-        } 
+        """Get app information.
 
-
-api.add_resource(AppParameterApi, '/parameters')
-api.add_resource(AppMetaApi, '/meta')
-api.add_resource(AppInfoApi, '/info')
+        Returns basic information about the application including name, description, tags, and mode.
+        """
+        try:
+            summary = application_services().app_definitions.get_summary(app_model.id)
+        except AppDefinitionUnavailableError:
+            raise AppUnavailableError() from None
+        return dump_response(AppInfoResponse, summary)

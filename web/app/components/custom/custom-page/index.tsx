@@ -1,54 +1,71 @@
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
+import { useQueryState } from 'nuqs'
 import { useTranslation } from 'react-i18next'
-import CustomWebAppBrand from '../custom-web-app-brand'
-import CustomAppHeaderBrand from '../custom-app-header-brand'
-import s from '../style.module.css'
-import GridMask from '@/app/components/base/grid-mask'
-import UpgradeBtn from '@/app/components/billing/upgrade-btn'
-import { useProviderContext } from '@/context/provider-context'
-import { Plan } from '@/app/components/billing/type'
 import { contactSalesUrl } from '@/app/components/billing/config'
+import {
+  pricingQueryParamName,
+  pricingQueryParser,
+} from '@/app/components/billing/pricing/query-params'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
+import { consoleQuery } from '@/service/console'
+import CustomWebAppBrand from '../custom-web-app-brand'
 
 const CustomPage = () => {
-  const { t } = useTranslation()
-  const { plan, enableBilling } = useProviderContext()
-
-  const showBillingTip = enableBilling && plan.type === Plan.sandbox
-  const showCustomAppHeaderBrand = enableBilling && plan.type === Plan.sandbox
-  const showContact = enableBilling && (plan.type === Plan.professional || plan.type === Plan.team)
+  const { t } = useTranslation(['billing', 'custom'])
+  const { data: deploymentEdition } = useSuspenseQuery({
+    ...systemFeaturesQueryOptions(),
+    select: ({ deployment_edition }) => deployment_edition,
+  })
+  const { data: billing } = useQuery(
+    consoleQuery.features.get.queryOptions({
+      enabled: deploymentEdition === 'CLOUD',
+      select: (data) => ({
+        plan: data.billing.subscription.plan,
+        canReplaceLogo: data.can_replace_logo,
+      }),
+    }),
+  )
+  const [, setPricing] = useQueryState(pricingQueryParamName, pricingQueryParser)
+  const showBillingTip = deploymentEdition === 'CLOUD' && billing?.canReplaceLogo === false
+  const showContact =
+    deploymentEdition === 'CLOUD' && (billing?.plan === 'professional' || billing?.plan === 'team')
 
   return (
-    <div className='flex flex-col'>
-      {
-        showBillingTip && (
-          <GridMask canvasClassName='!rounded-xl'>
-            <div className='flex justify-between mb-1 px-6 py-5 h-[88px] shadow-md rounded-xl border-[0.5px] border-gray-200'>
-              <div className={`${s.textGradient} leading-[24px] text-base font-semibold`}>
-                <div>{t('custom.upgradeTip.prefix')}</div>
-                <div>{t('custom.upgradeTip.suffix')}</div>
-              </div>
-              <UpgradeBtn />
+    <div className="flex flex-col overflow-x-hidden">
+      {showBillingTip && (
+        <div className="mb-1 flex justify-between rounded-xl bg-linear-to-r from-components-input-border-active-prompt-1 to-components-input-border-active-prompt-2 p-4 pl-6 shadow-lg backdrop-blur-xs">
+          <div className="space-y-1 text-text-primary-on-surface">
+            <h4 className="title-xl-semi-bold">
+              {t(($) => $['upgradeTip.title'], { ns: 'custom' })}
+            </h4>
+            <div className="system-sm-regular">
+              {t(($) => $['upgradeTip.des'], { ns: 'custom' })}
             </div>
-          </GridMask>
-        )
-      }
-      <CustomWebAppBrand />
-      {
-        showCustomAppHeaderBrand && (
-          <>
-            <div className='my-2 h-[0.5px] bg-gray-100'></div>
-            <CustomAppHeaderBrand />
-          </>
-        )
-      }
-      {
-        showContact && (
-          <div className='absolute bottom-0 h-[50px] leading-[50px] text-xs text-gray-500'>
-            {t('custom.customize.prefix')}
-            <a className='text-[#155EEF]' href={contactSalesUrl} target='_blank' rel='noopener noreferrer'>{t('custom.customize.contactUs')}</a>
-            {t('custom.customize.suffix')}
           </div>
-        )
-      }
+          <button
+            type="button"
+            className="flex h-10 w-30 cursor-pointer items-center justify-center rounded-3xl border-none bg-white p-0 system-md-semibold text-text-accent shadow-xs hover:opacity-95"
+            onClick={() => setPricing('open')}
+          >
+            {t(($) => $['upgradeBtn.encourageShort'], { ns: 'billing' })}
+          </button>
+        </div>
+      )}
+      <CustomWebAppBrand />
+      {showContact && (
+        <div className="mt-6 pb-4 text-xs leading-5 wrap-anywhere text-text-quaternary">
+          {t(($) => $['customize.prefix'], { ns: 'custom' })}
+          <a
+            className="text-text-accent"
+            href={contactSalesUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {t(($) => $['customize.contactUs'], { ns: 'custom' })}
+          </a>
+          {t(($) => $['customize.suffix'], { ns: 'custom' })}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,123 +1,160 @@
 'use client'
 import type { FC } from 'react'
-import React, { useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import Toast from '../../base/toast'
-import { ModelTypeEnum } from '../../header/account-setting/model-provider-page/declarations'
-import { XClose } from '@/app/components/base/icons/src/vender/line/general'
+import type { IndexingType } from '../create/step-two'
 import type { RetrievalConfig } from '@/types/app'
-import RetrievalMethodConfig from '@/app/components/datasets/common/retrieval-method-config'
+import { Button } from '@langgenius/dify-ui/button'
+import { DrawerTitle } from '@langgenius/dify-ui/drawer'
+import { RiCloseLine } from '@remixicon/react'
+import { useQuery } from '@tanstack/react-query'
+import * as React from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { isReRankModelSelected } from '@/app/components/datasets/common/check-rerank-model'
 import EconomicalRetrievalMethodConfig from '@/app/components/datasets/common/economical-retrieval-method-config'
-import Button from '@/app/components/base/button'
-import { ensureRerankModelSelected, isReRankModelSelected } from '@/app/components/datasets/common/check-rerank-model'
-import { useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import RetrievalMethodConfig from '@/app/components/datasets/common/retrieval-method-config'
+import { toast } from '@/app/notifications'
+import { useDatasetDetailContextWithSelector } from '@/context/dataset-detail'
+import { useDocLink } from '@/context/i18n'
+import { consoleQuery } from '@/service/console'
+import { ModelTypeEnum } from '../../header/account-setting/model-provider-page/declarations'
+import { checkShowMultiModalTip } from '../settings/utils'
 
-type Props = {
+type Props = Readonly<{
   indexMethod: string
   value: RetrievalConfig
   isShow: boolean
   onHide: () => void
   onSave: (value: RetrievalConfig) => void
-}
-
-const ModifyRetrievalModal: FC<Props> = ({
-  indexMethod,
-  value,
-  isShow,
-  onHide,
-  onSave,
-}) => {
+}>
+const ModifyRetrievalModal: FC<Props> = ({ indexMethod, value, isShow, onHide, onSave }) => {
   const ref = useRef(null)
-  const { t } = useTranslation()
+  const { t } = useTranslation(['appDebug', 'common', 'datasetSettings'])
+  const docLink = useDocLink()
   const [retrievalConfig, setRetrievalConfig] = useState(value)
-
+  const embeddingModel = useDatasetDetailContextWithSelector(
+    (state) => state.dataset?.embedding_model,
+  )
+  const embeddingModelProvider = useDatasetDetailContextWithSelector(
+    (state) => state.dataset?.embedding_model_provider,
+  )
   // useClickAway(() => {
   //   if (ref)
   //     onHide()
   // }, ref)
-
-  const {
-    modelList: rerankModelList,
-    defaultModel: rerankDefaultModel,
-    currentModel: isRerankDefaultModelVaild,
-  } = useModelListAndDefaultModelAndCurrentProviderAndModel(ModelTypeEnum.rerank)
-
+  const { data: embeddingModelList = [] } = useQuery(
+    consoleQuery.workspaces.current.models.modelTypes.byModelType.get.queryOptions({
+      input: { params: { model_type: ModelTypeEnum.textEmbedding } },
+      select: (response) => response.data,
+    }),
+  )
+  const { data: rerankModelList = [] } = useQuery(
+    consoleQuery.workspaces.current.models.modelTypes.byModelType.get.queryOptions({
+      input: { params: { model_type: ModelTypeEnum.rerank } },
+      select: (response) => response.data,
+    }),
+  )
   const handleSave = () => {
     if (
       !isReRankModelSelected({
-        rerankDefaultModel,
-        isRerankDefaultModelVaild: !!isRerankDefaultModelVaild,
         rerankModelList,
         retrievalConfig,
         indexMethod,
       })
     ) {
-      Toast.notify({ type: 'error', message: t('appDebug.datasetConfig.rerankModelRequired') })
+      toast.error(t(($) => $['datasetConfig.rerankModelRequired'], { ns: 'appDebug' }))
       return
     }
-    onSave(ensureRerankModelSelected({
-      rerankDefaultModel: rerankDefaultModel!,
-      retrievalConfig,
-      indexMethod,
-    }))
+    onSave(retrievalConfig)
   }
-
-  if (!isShow)
-    return null
-
+  const showMultiModalTip = useMemo(() => {
+    return checkShowMultiModalTip({
+      embeddingModel: {
+        provider: embeddingModelProvider ?? '',
+        model: embeddingModel ?? '',
+      },
+      rerankingEnable: retrievalConfig.reranking_enable,
+      rerankModel: {
+        rerankingProviderName: retrievalConfig.reranking_model.reranking_provider_name,
+        rerankingModelName: retrievalConfig.reranking_model.reranking_model_name,
+      },
+      indexMethod: indexMethod as IndexingType,
+      embeddingModelList,
+      rerankModelList,
+    })
+  }, [
+    embeddingModelProvider,
+    embeddingModel,
+    retrievalConfig.reranking_enable,
+    retrievalConfig.reranking_model,
+    indexMethod,
+    embeddingModelList,
+    rerankModelList,
+  ])
+  if (!isShow) return null
   return (
-    <div
-      className='w-full flex flex-col bg-white border-[0.5px] border-gray-200 rounded-xl shadow-xl'
+    <form
+      className="flex w-full flex-col rounded-2xl border-[0.5px] border-components-panel-border bg-components-panel-bg shadow-2xl shadow-shadow-shadow-9"
       style={{
         height: 'calc(100vh - 72px)',
       }}
       ref={ref}
+      onSubmit={(event) => {
+        event.preventDefault()
+        handleSave()
+      }}
     >
-      <div className='shrink-0 flex justify-between items-center pl-6 pr-5 h-14 border-b border-b-gray-100'>
-        <div className='text-base font-semibold text-gray-900'>
-          <div>{t('datasetSettings.form.retrievalSetting.title')}</div>
-          <div className='leading-[18px] text-xs font-normal text-gray-500'>
-            <a target='_blank' rel='noopener noreferrer' href='https://docs.dify.ai/features/retrieval-augment' className='text-[#155eef]'>{t('datasetSettings.form.retrievalSetting.learnMore')}</a>
-            {t('datasetSettings.form.retrievalSetting.description')}
+      <div className="flex h-15 shrink-0 justify-between px-3 pt-3.5 pb-1">
+        <div className="text-base font-semibold text-text-primary">
+          <DrawerTitle>
+            {t(($) => $['form.retrievalSetting.title'], { ns: 'datasetSettings' })}
+          </DrawerTitle>
+          <div className="text-xs leading-4.5 font-normal text-text-tertiary">
+            <a
+              target="_blank"
+              rel="noopener noreferrer"
+              href={docLink('/use-dify/knowledge/create-knowledge/setting-indexing-methods')}
+              className="text-text-accent"
+            >
+              {t(($) => $['form.retrievalSetting.learnMore'], { ns: 'datasetSettings' })}
+            </a>
+            {t(($) => $['form.retrievalSetting.description'], { ns: 'datasetSettings' })}
           </div>
         </div>
-        <div className='flex items-center'>
-          <div
+        <div className="flex">
+          <button
+            type="button"
+            className="flex size-8 cursor-pointer items-center justify-center border-none bg-transparent p-0 focus-visible:ring-1 focus-visible:ring-components-input-border-active focus-visible:outline-hidden"
+            aria-label={t(($) => $['operation.close'], { ns: 'common' })}
             onClick={onHide}
-            className='flex justify-center items-center w-6 h-6 cursor-pointer'
           >
-            <XClose className='w-4 h-4 text-gray-500' />
-          </div>
+            <RiCloseLine className="size-4 text-text-tertiary" aria-hidden="true" />
+          </button>
         </div>
       </div>
 
-      <div className='p-6 border-b' style={{
-        borderBottom: 'rgba(0, 0, 0, 0.05)',
-      }}>
-        {indexMethod === 'high_quality'
-          ? (
-            <RetrievalMethodConfig
-              value={retrievalConfig}
-              onChange={setRetrievalConfig}
-            />
-          )
-          : (
-            <EconomicalRetrievalMethodConfig
-              value={retrievalConfig}
-              onChange={setRetrievalConfig}
-            />
-          )}
+      <div className="px-4 py-2">
+        <div className="mb-1 text-[13px] leading-6 font-semibold text-text-secondary">
+          {t(($) => $['form.retrievalSetting.method'], { ns: 'datasetSettings' })}
+        </div>
+        {indexMethod === 'high_quality' ? (
+          <RetrievalMethodConfig
+            value={retrievalConfig}
+            onChange={setRetrievalConfig}
+            showMultiModalTip={showMultiModalTip}
+          />
+        ) : (
+          <EconomicalRetrievalMethodConfig value={retrievalConfig} onChange={setRetrievalConfig} />
+        )}
       </div>
-      <div
-        className='flex justify-end pt-6 px-6 border-t'
-        style={{
-          borderColor: 'rgba(0, 0, 0, 0.05)',
-        }}
-      >
-        <Button className='mr-2 flex-shrink-0' onClick={onHide}>{t('common.operation.cancel')}</Button>
-        <Button type='primary' className='flex-shrink-0' onClick={handleSave} >{t('common.operation.save')}</Button>
+      <div className="flex justify-end p-4 pt-2">
+        <Button className="me-2 shrink-0" onClick={onHide}>
+          {t(($) => $['operation.cancel'], { ns: 'common' })}
+        </Button>
+        <Button type="submit" variant="primary" className="shrink-0">
+          {t(($) => $['operation.save'], { ns: 'common' })}
+        </Button>
       </div>
-    </div>
+    </form>
   )
 }
 export default React.memo(ModifyRetrievalModal)

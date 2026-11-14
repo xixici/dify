@@ -1,31 +1,27 @@
 'use client'
+import type { ToastType } from '@langgenius/dify-ui/toast'
 import type { FC } from 'react'
-import React, { useEffect, useRef, useState } from 'react'
-import { useBoolean } from 'ahooks'
-import { t } from 'i18next'
-import produce from 'immer'
-import cn from 'classnames'
-import TextGenerationRes from '@/app/components/app/text-generate/item'
-import NoData from '@/app/components/share/text-generation/no-data'
-import Toast from '@/app/components/base/toast'
-import { sendCompletionMessage, sendWorkflowMessage, updateFeedback } from '@/service/share'
-import type { Feedbacktype } from '@/app/components/app/chat/type'
-import Loading from '@/app/components/base/loading'
 import type { PromptConfig } from '@/models/debug'
-import type { InstalledApp } from '@/models/explore'
-import type { ModerationService } from '@/models/common'
-import { TransferMethod, type VisionFile, type VisionSettings } from '@/types/app'
-import { NodeRunningStatus, WorkflowRunningStatus } from '@/app/components/workflow/types'
-import type { WorkflowProcess } from '@/app/components/base/chat/types'
-import { sleep } from '@/utils'
+import type { SiteInfo } from '@/models/share'
+import type { AppSourceType } from '@/service/share'
+import type { VisionFile, VisionSettings } from '@/types/app'
+import { Button } from '@langgenius/dify-ui/button'
+import { useCallback } from 'react'
+import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+import TextGenerationRes from '@/app/components/app/text-generate/item'
+import { LoadingPlaceholder } from '@/app/components/base/loading-placeholder'
+import NoData from '@/app/components/share/text-generation/no-data'
+import { toast } from '@/app/notifications'
+import { useResultRunState } from './hooks/use-result-run-state'
+import { useResultSender } from './hooks/use-result-sender'
 
-export type IResultProps = {
+type IResultProps = {
   isWorkflow: boolean
   isCallBatchAPI: boolean
-  isPC: boolean
-  isMobile: boolean
-  isInstalledApp: boolean
-  installedAppInfo?: InstalledApp
+  isBelowMd: boolean
+  appSourceType: AppSourceType
+  appId?: string
   isError: boolean
   isShowTextToSpeech: boolean
   promptConfig: PromptConfig | null
@@ -38,19 +34,24 @@ export type IResultProps = {
   handleSaveMessage: (messageId: string) => void
   taskId?: number
   onCompleted: (completionRes: string, taskId?: number, success?: boolean) => void
-  enableModeration?: boolean
-  moderationService?: (text: string) => ReturnType<ModerationService>
   visionConfig: VisionSettings
   completionFiles: VisionFile[]
+  siteInfo: SiteInfo | null
+  onRunStart: () => void
+  onRunControlChange?: (
+    control: {
+      onStop: () => Promise<void> | void
+      isStopping: boolean
+    } | null,
+  ) => void
+  hideInlineStopButton?: boolean
 }
-
 const Result: FC<IResultProps> = ({
   isWorkflow,
   isCallBatchAPI,
-  isPC,
-  isMobile,
-  isInstalledApp,
-  installedAppInfo,
+  isBelowMd,
+  appSourceType,
+  appId,
   isError,
   isShowTextToSpeech,
   promptConfig,
@@ -65,288 +66,110 @@ const Result: FC<IResultProps> = ({
   onCompleted,
   visionConfig,
   completionFiles,
+  siteInfo,
+  onRunStart,
+  onRunControlChange,
+  hideInlineStopButton = false,
 }) => {
-  const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] = useBoolean(false)
-  useEffect(() => {
-    if (controlStopResponding)
-      setRespondingFalse()
-  }, [controlStopResponding])
-
-  const [completionRes, doSetCompletionRes] = useState<any>('')
-  const completionResRef = useRef<any>()
-  const setCompletionRes = (res: any) => {
-    completionResRef.current = res
-    doSetCompletionRes(res)
-  }
-  const getCompletionRes = () => completionResRef.current
-  const [workflowProcessData, doSetWorkflowProccessData] = useState<WorkflowProcess>()
-  const workflowProcessDataRef = useRef<WorkflowProcess>()
-  const setWorkflowProccessData = (data: WorkflowProcess) => {
-    workflowProcessDataRef.current = data
-    doSetWorkflowProccessData(data)
-  }
-  const getWorkflowProccessData = () => workflowProcessDataRef.current
-
-  const { notify } = Toast
-  const isNoData = !completionRes
-
-  const [messageId, setMessageId] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState<Feedbacktype>({
-    rating: null,
+  const { t } = useTranslation(['share', 'appDebug', 'common', 'workflow'])
+  const notify = useCallback(({ type, message }: { type: ToastType; message: string }) => {
+    toast(message, { type })
+  }, [])
+  const runState = useResultRunState({
+    appId,
+    appSourceType,
+    controlStopResponding,
+    isWorkflow,
+    notify,
+    onRunControlChange,
   })
-
-  const handleFeedback = async (feedback: Feedbacktype) => {
-    await updateFeedback({ url: `/messages/${messageId}/feedbacks`, body: { rating: feedback.rating } }, isInstalledApp, installedAppInfo?.id)
-    setFeedback(feedback)
-  }
-
-  const logError = (message: string) => {
-    notify({ type: 'error', message })
-  }
-
-  const checkCanSend = () => {
-    // batch will check outer
-    if (isCallBatchAPI)
-      return true
-
-    const prompt_variables = promptConfig?.prompt_variables
-    if (!prompt_variables || prompt_variables?.length === 0) {
-      if (completionFiles.find(item => item.transfer_method === TransferMethod.local_file && !item.upload_file_id)) {
-        notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
-        return false
-      }
-      return true
-    }
-
-    let hasEmptyInput = ''
-    const requiredVars = prompt_variables?.filter(({ key, name, required }) => {
-      const res = (!key || !key.trim()) || (!name || !name.trim()) || (required || required === undefined || required === null)
-      return res
-    }) || [] // compatible with old version
-    requiredVars.forEach(({ key, name }) => {
-      if (hasEmptyInput)
-        return
-
-      if (!inputs[key])
-        hasEmptyInput = name
-    })
-
-    if (hasEmptyInput) {
-      logError(t('appDebug.errorMessage.valueOfVarRequired', { key: hasEmptyInput }))
-      return false
-    }
-
-    if (completionFiles.find(item => item.transfer_method === TransferMethod.local_file && !item.upload_file_id)) {
-      notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
-      return false
-    }
-    return !hasEmptyInput
-  }
-
-  const handleSend = async () => {
-    if (isResponding) {
-      notify({ type: 'info', message: t('appDebug.errorMessage.waitForResponse') })
-      return false
-    }
-
-    if (!checkCanSend())
-      return
-
-    const data: Record<string, any> = {
-      inputs,
-    }
-    if (visionConfig.enabled && completionFiles && completionFiles?.length > 0) {
-      data.files = completionFiles.map((item) => {
-        if (item.transfer_method === TransferMethod.local_file) {
-          return {
-            ...item,
-            url: '',
-          }
-        }
-        return item
-      })
-    }
-
-    setMessageId(null)
-    setFeedback({
-      rating: null,
-    })
-    setCompletionRes('')
-
-    let res: string[] = []
-    let tempMessageId = ''
-
-    if (!isPC)
-      onShowRes()
-
-    setRespondingTrue()
-    let isEnd = false
-    let isTimeout = false;
-    (async () => {
-      await sleep(1000 * 60) // 1min timeout
-      if (!isEnd) {
-        setRespondingFalse()
-        onCompleted(getCompletionRes(), taskId, false)
-        isTimeout = true
-      }
-    })()
-
-    if (isWorkflow) {
-      sendWorkflowMessage(
-        data,
-        {
-          onWorkflowStarted: ({ workflow_run_id }) => {
-            tempMessageId = workflow_run_id
-            setWorkflowProccessData({
-              status: WorkflowRunningStatus.Running,
-              tracing: [],
-              expand: false,
-            })
-            setRespondingFalse()
-          },
-          onNodeStarted: ({ data }) => {
-            setWorkflowProccessData(produce(getWorkflowProccessData()!, (draft) => {
-              draft.expand = true
-              draft.tracing!.push({
-                ...data,
-                status: NodeRunningStatus.Running,
-                expand: true,
-              } as any)
-            }))
-          },
-          onNodeFinished: ({ data }) => {
-            setWorkflowProccessData(produce(getWorkflowProccessData()!, (draft) => {
-              const currentIndex = draft.tracing!.findIndex(trace => trace.node_id === data.node_id)
-              if (currentIndex > -1 && draft.tracing) {
-                draft.tracing[currentIndex] = {
-                  ...(draft.tracing[currentIndex].extras
-                    ? { extras: draft.tracing[currentIndex].extras }
-                    : {}),
-                  ...data,
-                  expand: !!data.error,
-                } as any
-              }
-            }))
-          },
-          onWorkflowFinished: ({ data }) => {
-            if (isTimeout)
-              return
-            if (data.error) {
-              notify({ type: 'error', message: data.error })
-              setRespondingFalse()
-              onCompleted(getCompletionRes(), taskId, false)
-              isEnd = true
-              return
-            }
-            setWorkflowProccessData(produce(getWorkflowProccessData()!, (draft) => {
-              draft.status = data.error ? WorkflowRunningStatus.Failed : WorkflowRunningStatus.Succeeded
-            }))
-            if (!data.outputs)
-              setCompletionRes('')
-            else if (Object.keys(data.outputs).length > 1)
-              setCompletionRes(data.outputs)
-            else
-              setCompletionRes(data.outputs[Object.keys(data.outputs)[0]])
-            setRespondingFalse()
-            setMessageId(tempMessageId)
-            onCompleted(getCompletionRes(), taskId, true)
-            isEnd = true
-          },
-        },
-        isInstalledApp,
-        installedAppInfo?.id,
-      )
-    }
-    else {
-      sendCompletionMessage(data, {
-        onData: (data: string, _isFirstMessage: boolean, { messageId }) => {
-          tempMessageId = messageId
-          res.push(data)
-          setCompletionRes(res.join(''))
-        },
-        onCompleted: () => {
-          if (isTimeout)
-            return
-          setRespondingFalse()
-          setMessageId(tempMessageId)
-          onCompleted(getCompletionRes(), taskId, true)
-          isEnd = true
-        },
-        onMessageReplace: (messageReplace) => {
-          res = [messageReplace.answer]
-          setCompletionRes(res.join(''))
-        },
-        onError() {
-          if (isTimeout)
-            return
-          setRespondingFalse()
-          onCompleted(getCompletionRes(), taskId, false)
-          isEnd = true
-        },
-      }, isInstalledApp, installedAppInfo?.id)
-    }
-  }
-
-  const [controlClearMoreLikeThis, setControlClearMoreLikeThis] = useState(0)
-  useEffect(() => {
-    if (controlSend) {
-      handleSend()
-      setControlClearMoreLikeThis(Date.now())
-    }
-  }, [controlSend])
-
-  useEffect(() => {
-    if (controlRetry)
-      handleSend()
-  }, [controlRetry])
-
+  const { handleSend, prepareHumanInputSubmission } = useResultSender({
+    appId,
+    appSourceType,
+    completionFiles,
+    controlRetry,
+    controlSend,
+    inputs,
+    isCallBatchAPI,
+    isBelowMd,
+    isWorkflow,
+    notify,
+    onCompleted,
+    onRunStart,
+    onShowRes,
+    promptConfig,
+    runState,
+    t,
+    taskId,
+    visionConfig,
+  })
+  const isNoData = !runState.completionRes
   const renderTextGenerationRes = () => (
-    <TextGenerationRes
-      isWorkflow={isWorkflow}
-      workflowProcessData={workflowProcessData}
-      className='mt-3'
-      isError={isError}
-      onRetry={handleSend}
-      content={completionRes}
-      messageId={messageId}
-      isInWebApp
-      moreLikeThis={moreLikeThisEnabled}
-      onFeedback={handleFeedback}
-      feedback={feedback}
-      onSave={handleSaveMessage}
-      isMobile={isMobile}
-      isInstalledApp={isInstalledApp}
-      installedAppId={installedAppInfo?.id}
-      isLoading={isCallBatchAPI ? (!completionRes && isResponding) : false}
-      taskId={isCallBatchAPI ? ((taskId as number) < 10 ? `0${taskId}` : `${taskId}`) : undefined}
-      controlClearMoreLikeThis={controlClearMoreLikeThis}
-      isShowTextToSpeech={isShowTextToSpeech}
-    />
-  )
-
-  return (
-    <div className={cn(isNoData && !isCallBatchAPI && 'h-full')}>
-      {!isCallBatchAPI && (
-        (isResponding && !completionRes)
-          ? (
-            <div className='flex h-full w-full justify-center items-center'>
-              <Loading type='area' />
-            </div>)
-          : (
-            <>
-              {(isNoData && !workflowProcessData)
-                ? <NoData />
-                : renderTextGenerationRes()
-              }
-            </>
-          )
-      )}
-      {isCallBatchAPI && (
-        <div className='mt-2'>
-          {renderTextGenerationRes()}
+    <>
+      {!hideInlineStopButton && runState.isResponding && runState.currentTaskId && (
+        <div className={`mb-3 flex ${isBelowMd ? 'justify-center' : 'justify-end'}`}>
+          <Button variant="secondary" disabled={runState.isStopping} onClick={runState.handleStop}>
+            {runState.isStopping ? (
+              <span aria-hidden className="i-ri-loader-2-line h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <span aria-hidden className="i-ri-stop-circle-fill h-3.5 w-3.5" />
+            )}
+            <span className="text-xs font-normal">
+              {t(($) => $['operation.stopResponding'], { ns: 'appDebug' })}
+            </span>
+          </Button>
         </div>
       )}
-    </div>
+      <TextGenerationRes
+        isWorkflow={isWorkflow}
+        workflowProcessData={runState.workflowProcessData}
+        isError={isError}
+        onRetry={handleSend}
+        prepareHumanInputSubmission={prepareHumanInputSubmission}
+        content={runState.completionRes}
+        messageId={runState.messageId}
+        isInWebApp
+        moreLikeThis={moreLikeThisEnabled}
+        onFeedback={runState.handleFeedback}
+        feedback={runState.feedback}
+        onSave={handleSaveMessage}
+        isBelowMd={isBelowMd}
+        appSourceType={appSourceType}
+        installedAppId={appId}
+        // isLoading={isCallBatchAPI ? (!completionRes && isResponding) : false}
+        isLoading={false}
+        taskId={isCallBatchAPI ? ((taskId as number) < 10 ? `0${taskId}` : `${taskId}`) : undefined}
+        controlClearMoreLikeThis={runState.controlClearMoreLikeThis}
+        isShowTextToSpeech={isShowTextToSpeech}
+        hideProcessDetail
+        siteInfo={siteInfo}
+      />
+    </>
+  )
+  return (
+    <>
+      {!isCallBatchAPI &&
+        !isWorkflow &&
+        (runState.isResponding && !runState.completionRes ? (
+          <div className="flex size-full items-center justify-center">
+            <LoadingPlaceholder />
+          </div>
+        ) : (
+          <>{isNoData ? <NoData /> : renderTextGenerationRes()}</>
+        ))}
+      {!isCallBatchAPI &&
+        isWorkflow &&
+        (runState.isResponding && !runState.workflowProcessData ? (
+          <div className="flex size-full items-center justify-center">
+            <LoadingPlaceholder />
+          </div>
+        ) : !runState.workflowProcessData ? (
+          <NoData />
+        ) : (
+          renderTextGenerationRes()
+        ))}
+      {isCallBatchAPI && renderTextGenerationRes()}
+    </>
   )
 }
 export default React.memo(Result)

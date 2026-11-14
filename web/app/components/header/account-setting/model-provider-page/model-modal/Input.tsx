@@ -1,7 +1,7 @@
 import type { FC } from 'react'
-import { CheckCircle } from '@/app/components/base/icons/src/vender/solid/general'
 
 type InputProps = {
+  id?: string
   value?: string
   onChange: (v: string) => void
   onFocus?: () => void
@@ -13,7 +13,9 @@ type InputProps = {
   min?: number
   max?: number
 }
+
 const Input: FC<InputProps> = ({
+  id,
   value,
   onChange,
   onFocus,
@@ -26,46 +28,40 @@ const Input: FC<InputProps> = ({
   max,
 }) => {
   const toLimit = (v: string) => {
-    const minNum = parseFloat(`${min}`)
-    const maxNum = parseFloat(`${max}`)
-    if (!isNaN(minNum) && parseFloat(v) < minNum) {
+    const minNum = Number.parseFloat(`${min}`)
+    const maxNum = Number.parseFloat(`${max}`)
+    if (!Number.isNaN(minNum) && Number.parseFloat(v) < minNum) {
       onChange(`${min}`)
       return
     }
-
-    if (!isNaN(maxNum) && parseFloat(v) > maxNum)
-      onChange(`${max}`)
+    if (!Number.isNaN(maxNum) && Number.parseFloat(v) > maxNum) onChange(`${max}`)
   }
+
   return (
-    <div className='relative'>
+    <div className="relative">
       <input
-        tabIndex={-1}
-        className={`
-          block px-3 w-full h-9 bg-gray-100 text-sm rounded-lg border border-transparent
-          appearance-none outline-none caret-primary-600
-          hover:border-[rgba(0,0,0,0.08)] hover:bg-gray-50
-          focus:bg-white focus:border-gray-300 focus:shadow-xs
-          placeholder:text-sm placeholder:text-gray-400
-          ${validated && 'pr-[30px]'}
-          ${className}
-        `}
+        id={id}
+        tabIndex={0}
+        // Do not set autoComplete for security - prevents browser from storing sensitive API keys
+        className={`block h-8 w-full appearance-none rounded-lg border border-transparent bg-components-input-bg-normal px-3 text-sm text-components-input-text-filled caret-primary-600 outline-hidden placeholder:text-sm placeholder:text-text-tertiary hover:border-components-input-border-hover hover:bg-components-input-bg-hover focus:border-components-input-border-active focus:bg-components-input-bg-active focus:shadow-xs ${validated ? 'pe-7.5' : ''} ${className || ''} `}
         placeholder={placeholder || ''}
-        onChange={e => onChange(e.target.value)}
-        onBlur={e => toLimit(e.target.value)}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={(e) => toLimit(e.target.value)}
         onFocus={onFocus}
-        value={value || ''}
+        value={value}
         disabled={disabled}
         type={type}
         min={min}
         max={max}
       />
-      {
-        validated && (
-          <div className='absolute top-2.5 right-2.5'>
-            <CheckCircle className='w-4 h-4 text-[#039855]' />
-          </div>
-        )
-      }
+      {validated && (
+        <div className="absolute inset-e-2.5 top-2.5">
+          <span
+            aria-hidden
+            className="i-custom-vender-solid-general-check-circle h-4 w-4 text-[#039855]"
+          />
+        </div>
+      )}
     </div>
   )
 }

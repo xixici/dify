@@ -1,56 +1,31 @@
-import type { ComponentType } from 'react'
-import { BlockEnum } from '../types'
-import StartNode from './start/node'
-import StartPanel from './start/panel'
-import EndNode from './end/node'
-import EndPanel from './end/panel'
-import AnswerNode from './answer/node'
-import AnswerPanel from './answer/panel'
-import LLMNode from './llm/node'
-import LLMPanel from './llm/panel'
-import KnowledgeRetrievalNode from './knowledge-retrieval/node'
-import KnowledgeRetrievalPanel from './knowledge-retrieval/panel'
-import QuestionClassifierNode from './question-classifier/node'
-import QuestionClassifierPanel from './question-classifier/panel'
-import IfElseNode from './if-else/node'
-import IfElsePanel from './if-else/panel'
-import CodeNode from './code/node'
-import CodePanel from './code/panel'
-import TemplateTransformNode from './template-transform/node'
-import TemplateTransformPanel from './template-transform/panel'
-import HttpNode from './http/node'
-import HttpPanel from './http/panel'
-import ToolNode from './tool/node'
-import ToolPanel from './tool/panel'
-import VariableAssignerNode from './variable-assigner/node'
-import VariableAssignerPanel from './variable-assigner/panel'
+import type { I18nKeysByPrefix } from '@/types/i18n'
+import { TransferMethod } from '@/types/app'
 
-export const NodeComponentMap: Record<string, ComponentType<any>> = {
-  [BlockEnum.Start]: StartNode,
-  [BlockEnum.End]: EndNode,
-  [BlockEnum.Answer]: AnswerNode,
-  [BlockEnum.LLM]: LLMNode,
-  [BlockEnum.KnowledgeRetrieval]: KnowledgeRetrievalNode,
-  [BlockEnum.QuestionClassifier]: QuestionClassifierNode,
-  [BlockEnum.IfElse]: IfElseNode,
-  [BlockEnum.Code]: CodeNode,
-  [BlockEnum.TemplateTransform]: TemplateTransformNode,
-  [BlockEnum.HttpRequest]: HttpNode,
-  [BlockEnum.Tool]: ToolNode,
-  [BlockEnum.VariableAssigner]: VariableAssignerNode,
+type OptionItem = {
+  value: string
+  i18nKey: I18nKeysByPrefix<'workflowLogic', 'nodes.ifElse.optionName.'>
 }
 
-export const PanelComponentMap: Record<string, ComponentType<any>> = {
-  [BlockEnum.Start]: StartPanel,
-  [BlockEnum.End]: EndPanel,
-  [BlockEnum.Answer]: AnswerPanel,
-  [BlockEnum.LLM]: LLMPanel,
-  [BlockEnum.KnowledgeRetrieval]: KnowledgeRetrievalPanel,
-  [BlockEnum.QuestionClassifier]: QuestionClassifierPanel,
-  [BlockEnum.IfElse]: IfElsePanel,
-  [BlockEnum.Code]: CodePanel,
-  [BlockEnum.TemplateTransform]: TemplateTransformPanel,
-  [BlockEnum.HttpRequest]: HttpPanel,
-  [BlockEnum.Tool]: ToolPanel,
-  [BlockEnum.VariableAssigner]: VariableAssignerPanel,
-}
+export const FILE_TYPE_OPTIONS = [
+  { value: 'image', i18nKey: 'image' },
+  { value: 'document', i18nKey: 'doc' },
+  { value: 'audio', i18nKey: 'audio' },
+  { value: 'video', i18nKey: 'video' },
+] as const satisfies readonly OptionItem[]
+
+export const TRANSFER_METHOD = [
+  { value: TransferMethod.local_file, i18nKey: 'localUpload' },
+  { value: TransferMethod.remote_url, i18nKey: 'url' },
+] as const satisfies readonly OptionItem[]
+
+export const SUB_VARIABLES = [
+  'type',
+  'size',
+  'name',
+  'url',
+  'extension',
+  'mime_type',
+  'transfer_method',
+  'related_id',
+]
+export const OUTPUT_FILE_SUB_VARIABLES = SUB_VARIABLES.filter((key) => key !== 'transfer_method')

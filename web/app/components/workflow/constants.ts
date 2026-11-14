@@ -1,240 +1,83 @@
 import type { Var } from './types'
 import { BlockEnum, VarType } from './types'
-import StartNodeDefault from './nodes/start/default'
-import AnswerDefault from './nodes/answer/default'
-import LLMDefault from './nodes/llm/default'
-import KnowledgeRetrievalDefault from './nodes/knowledge-retrieval/default'
-import QuestionClassifierDefault from './nodes/question-classifier/default'
-import IfElseDefault from './nodes/if-else/default'
-import CodeDefault from './nodes/code/default'
-import TemplateTransformDefault from './nodes/template-transform/default'
-import HttpRequestDefault from './nodes/http/default'
-import ToolDefault from './nodes/tool/default'
-import VariableAssignerDefault from './nodes/variable-assigner/default'
-import EndNodeDefault from './nodes/end/default'
 
-type NodesExtraData = {
-  author: string
-  about: string
-  availablePrevNodes: BlockEnum[]
-  availableNextNodes: BlockEnum[]
-  getAvailablePrevNodes: (isChatMode: boolean) => BlockEnum[]
-  getAvailableNextNodes: (isChatMode: boolean) => BlockEnum[]
-  checkValid: any
-}
-export const NODES_EXTRA_DATA: Record<BlockEnum, NodesExtraData> = {
-  [BlockEnum.Start]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: StartNodeDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: StartNodeDefault.getAvailableNextNodes,
-    checkValid: StartNodeDefault.checkValid,
-  },
-  [BlockEnum.End]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: EndNodeDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: EndNodeDefault.getAvailableNextNodes,
-    checkValid: EndNodeDefault.checkValid,
-  },
-  [BlockEnum.Answer]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: AnswerDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: AnswerDefault.getAvailableNextNodes,
-    checkValid: AnswerDefault.checkValid,
-  },
-  [BlockEnum.LLM]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: LLMDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: LLMDefault.getAvailableNextNodes,
-    checkValid: LLMDefault.checkValid,
-  },
-  [BlockEnum.KnowledgeRetrieval]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: KnowledgeRetrievalDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: KnowledgeRetrievalDefault.getAvailableNextNodes,
-    checkValid: KnowledgeRetrievalDefault.checkValid,
-  },
-  [BlockEnum.IfElse]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: IfElseDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: IfElseDefault.getAvailableNextNodes,
-    checkValid: IfElseDefault.checkValid,
-  },
-  [BlockEnum.Code]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: CodeDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: CodeDefault.getAvailableNextNodes,
-    checkValid: CodeDefault.checkValid,
-  },
-  [BlockEnum.TemplateTransform]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: TemplateTransformDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: TemplateTransformDefault.getAvailableNextNodes,
-    checkValid: TemplateTransformDefault.checkValid,
-  },
-  [BlockEnum.QuestionClassifier]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: QuestionClassifierDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: QuestionClassifierDefault.getAvailableNextNodes,
-    checkValid: QuestionClassifierDefault.checkValid,
-  },
-  [BlockEnum.HttpRequest]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: HttpRequestDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: HttpRequestDefault.getAvailableNextNodes,
-    checkValid: HttpRequestDefault.checkValid,
-  },
-  [BlockEnum.VariableAssigner]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: VariableAssignerDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: VariableAssignerDefault.getAvailableNextNodes,
-    checkValid: VariableAssignerDefault.checkValid,
-  },
-  [BlockEnum.Tool]: {
-    author: 'Dify',
-    about: '',
-    availablePrevNodes: [],
-    availableNextNodes: [],
-    getAvailablePrevNodes: ToolDefault.getAvailablePrevNodes,
-    getAvailableNextNodes: ToolDefault.getAvailableNextNodes,
-    checkValid: ToolDefault.checkValid,
-  },
-}
-
-export const ALL_CHAT_AVAILABLE_BLOCKS = Object.keys(NODES_EXTRA_DATA).filter(key => key !== BlockEnum.End && key !== BlockEnum.Start) as BlockEnum[]
-export const ALL_COMPLETION_AVAILABLE_BLOCKS = Object.keys(NODES_EXTRA_DATA).filter(key => key !== BlockEnum.Answer && key !== BlockEnum.Start) as BlockEnum[]
-
-export const NODES_INITIAL_DATA = {
-  [BlockEnum.Start]: {
-    type: BlockEnum.Start,
-    title: '',
-    desc: '',
-    ...StartNodeDefault.defaultValue,
-  },
-  [BlockEnum.End]: {
-    type: BlockEnum.End,
-    title: '',
-    desc: '',
-    ...EndNodeDefault.defaultValue,
-  },
-  [BlockEnum.Answer]: {
-    type: BlockEnum.Answer,
-    title: '',
-    desc: '',
-    ...AnswerDefault.defaultValue,
-  },
-  [BlockEnum.LLM]: {
-    type: BlockEnum.LLM,
-    title: '',
-    desc: '',
-    variables: [],
-    ...LLMDefault.defaultValue,
-  },
-  [BlockEnum.KnowledgeRetrieval]: {
-    type: BlockEnum.KnowledgeRetrieval,
-    title: '',
-    desc: '',
-    query_variable_selector: [],
-    dataset_ids: [],
-    retrieval_mode: 'single',
-    ...KnowledgeRetrievalDefault.defaultValue,
-  },
-  [BlockEnum.IfElse]: {
-    type: BlockEnum.IfElse,
-    title: '',
-    desc: '',
-    ...IfElseDefault.defaultValue,
-  },
-  [BlockEnum.Code]: {
-    type: BlockEnum.Code,
-    title: '',
-    desc: '',
-    variables: [],
-    code_language: 'python3',
-    code: '',
-    outputs: [],
-    ...CodeDefault.defaultValue,
-  },
-  [BlockEnum.TemplateTransform]: {
-    type: BlockEnum.TemplateTransform,
-    title: '',
-    desc: '',
-    variables: [],
-    template: '',
-    ...TemplateTransformDefault.defaultValue,
-  },
-  [BlockEnum.QuestionClassifier]: {
-    type: BlockEnum.QuestionClassifier,
-    title: '',
-    desc: '',
-    query_variable_selector: [],
-    topics: [],
-    ...QuestionClassifierDefault.defaultValue,
-  },
-  [BlockEnum.HttpRequest]: {
-    type: BlockEnum.HttpRequest,
-    title: '',
-    desc: '',
-    variables: [],
-    ...HttpRequestDefault.defaultValue,
-  },
-  [BlockEnum.VariableAssigner]: {
-    type: BlockEnum.VariableAssigner,
-    title: '',
-    desc: '',
-    variables: [],
-    output_type: '',
-    ...VariableAssignerDefault.defaultValue,
-  },
-  [BlockEnum.Tool]: {
-    type: BlockEnum.Tool,
-    title: '',
-    desc: '',
-    ...ToolDefault.defaultValue,
-  },
-}
-
+export const MIN_ITERATION_PARALLEL_NUM = 1
+export const DEFAULT_ITER_TIMES = 1
+export const DEFAULT_LOOP_TIMES = 1
 export const NODE_WIDTH = 240
 export const X_OFFSET = 60
 export const NODE_WIDTH_X_OFFSET = NODE_WIDTH + X_OFFSET
 export const Y_OFFSET = 39
-export const MAX_TREE_DEEPTH = 50
 export const START_INITIAL_POSITION = { x: 80, y: 282 }
-export const AUTO_LAYOUT_OFFSET = {
-  x: -42,
-  y: 243,
+// React Flow elevates selected nodes by 1000, so nested graph elements use the next layer.
+export const NESTED_ELEMENT_Z_INDEX = 1001
+export const ITERATION_PADDING = {
+  top: 65,
+  right: 16,
+  bottom: 20,
+  left: 16,
+}
+
+export const LOOP_PADDING = {
+  top: 65,
+  right: 16,
+  bottom: 20,
+  left: 16,
+}
+
+export const NODE_LAYOUT_HORIZONTAL_PADDING = 60
+export const NODE_LAYOUT_VERTICAL_PADDING = 60
+
+export const isInWorkflowPage = () => {
+  const pathname = globalThis.location.pathname
+  return /^\/app\/[^/]+\/workflow$/.test(pathname) || /^\/workflow\/[^/]+$/.test(pathname)
+}
+export const getGlobalVars = (isChatflow: boolean): Var[] => {
+  const isInWorkflow = isInWorkflowPage()
+  const vars: Var[] = [
+    ...(isChatflow
+      ? [
+          {
+            variable: 'sys.dialogue_count',
+            type: VarType.number,
+          },
+          {
+            variable: 'sys.conversation_id',
+            type: VarType.string,
+          },
+        ]
+      : []),
+    {
+      variable: 'sys.user_id',
+      type: VarType.string,
+    },
+    {
+      variable: 'sys.app_id',
+      type: VarType.string,
+    },
+    {
+      variable: 'sys.workflow_id',
+      type: VarType.string,
+    },
+    {
+      variable: 'sys.workflow_run_id',
+      type: VarType.string,
+    },
+    ...(isInWorkflow && !isChatflow
+      ? [
+          {
+            variable: 'sys.timestamp',
+            type: VarType.number,
+          },
+        ]
+      : []),
+  ]
+  return vars
+}
+
+export const VAR_SHOW_NAME_MAP: Record<string, string> = {
+  'sys.query': 'query',
+  'sys.files': 'files',
 }
 
 export const RETRIEVAL_OUTPUT_STRUCT = `{
@@ -257,73 +100,59 @@ export const RETRIEVAL_OUTPUT_STRUCT = `{
   }
 }`
 
-export const SUPPORT_OUTPUT_VARS_NODE = [
-  BlockEnum.Start, BlockEnum.LLM, BlockEnum.KnowledgeRetrieval, BlockEnum.Code, BlockEnum.TemplateTransform,
-  BlockEnum.HttpRequest, BlockEnum.Tool, BlockEnum.VariableAssigner,
+export const SUPPORT_OUTPUT_VARS_NODE: BlockEnum[] = [
+  BlockEnum.Start,
+  BlockEnum.TriggerWebhook,
+  BlockEnum.TriggerPlugin,
+  BlockEnum.LLM,
+  BlockEnum.KnowledgeRetrieval,
+  BlockEnum.KnowledgeRetrievalV2,
+  BlockEnum.Code,
+  BlockEnum.TemplateTransform,
+  BlockEnum.HttpRequest,
+  BlockEnum.Tool,
+  BlockEnum.VariableAssigner,
+  BlockEnum.VariableAggregator,
+  BlockEnum.QuestionClassifier,
+  BlockEnum.ParameterExtractor,
+  BlockEnum.Iteration,
+  BlockEnum.Loop,
+  BlockEnum.DocExtractor,
+  BlockEnum.ListFilter,
+  BlockEnum.Agent,
+  BlockEnum.AgentV2,
+  BlockEnum.DataSource,
+  BlockEnum.HumanInput,
+  BlockEnum.HumanInputV2,
 ]
 
-const USAGE = {
-  variable: 'usage',
-  type: VarType.object,
-  children: [
-    {
-      variable: 'prompt_tokens',
-      type: VarType.number,
-    },
-    {
-      variable: 'prompt_unit_price',
-      type: VarType.number,
-    },
-    {
-      variable: 'prompt_price_unit',
-      type: VarType.number,
-    },
-    {
-      variable: 'prompt_price',
-      type: VarType.number,
-    },
-    {
-      variable: 'completion_tokens',
-      type: VarType.number,
-    },
-    {
-      variable: 'completion_unit_price',
-      type: VarType.number,
-    },
-    {
-      variable: 'completion_price_unit',
-      type: VarType.number,
-    },
-    {
-      variable: 'completion_unit_price',
-      type: VarType.number,
-    },
-    {
-      variable: 'completion_price',
-      type: VarType.number,
-    },
-    {
-      variable: 'total_tokens',
-      type: VarType.number,
-    },
-    {
-      variable: 'total_price',
-      type: VarType.number,
-    },
-    {
-      variable: 'currency',
-      type: VarType.string,
-    },
-    {
-      variable: 'latency',
-      type: VarType.number,
-    },
-  ],
-}
+export const AGENT_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: 'text',
+    type: VarType.string,
+  },
+  {
+    variable: 'files',
+    type: VarType.arrayFile,
+  },
+  {
+    variable: 'json',
+    type: VarType.object,
+  },
+]
+
 export const LLM_OUTPUT_STRUCT: Var[] = [
   {
     variable: 'text',
     type: VarType.string,
+  },
+  {
+    variable: 'reasoning_content',
+    type: VarType.string,
+  },
+  {
+    variable: 'usage',
+    type: VarType.object,
   },
 ]
 
@@ -341,36 +170,19 @@ export const TEMPLATE_TRANSFORM_OUTPUT_STRUCT: Var[] = [
   },
 ]
 
-const QUESTION_CLASSIFIER_OUTPUT_STRUCT_COMMON: Var[] = [
-  USAGE,
+export const QUESTION_CLASSIFIER_OUTPUT_STRUCT = [
   {
-    variable: 'topic',
-    type: VarType.string,
-  },
-]
-
-export const CHAT_QUESTION_CLASSIFIER_OUTPUT_STRUCT = [
-  {
-    variable: 'model_mode',
+    variable: 'class_name',
     type: VarType.string,
   },
   {
-    variable: 'messages',
-    type: VarType.arrayObject,
-  },
-  ...QUESTION_CLASSIFIER_OUTPUT_STRUCT_COMMON,
-]
-
-export const COMPLETION_QUESTION_CLASSIFIER_OUTPUT_STRUCT = [
-  {
-    variable: 'model_mode',
+    variable: 'class_label',
     type: VarType.string,
   },
   {
-    variable: 'text',
-    type: VarType.string,
+    variable: 'usage',
+    type: VarType.object,
   },
-  ...QUESTION_CLASSIFIER_OUTPUT_STRUCT_COMMON,
 ]
 
 export const HTTP_REQUEST_OUTPUT_STRUCT: Var[] = [
@@ -384,7 +196,7 @@ export const HTTP_REQUEST_OUTPUT_STRUCT: Var[] = [
   },
   {
     variable: 'headers',
-    type: VarType.string,
+    type: VarType.object,
   },
   {
     variable: 'files',
@@ -401,6 +213,87 @@ export const TOOL_OUTPUT_STRUCT: Var[] = [
     variable: 'files',
     type: VarType.arrayFile,
   },
+  {
+    variable: 'json',
+    type: VarType.arrayObject,
+  },
 ]
 
+export const HUMAN_INPUT_OUTPUT_STRUCT: Var[] = [
+  {
+    variable: '__action_id',
+    type: VarType.string,
+  },
+  {
+    variable: '__action_value',
+    type: VarType.string,
+  },
+  {
+    variable: '__rendered_content',
+    type: VarType.string,
+  },
+]
+
+export const PARAMETER_EXTRACTOR_COMMON_STRUCT: Var[] = [
+  {
+    variable: '__is_success',
+    type: VarType.number,
+  },
+  {
+    variable: '__reason',
+    type: VarType.string,
+  },
+  {
+    variable: '__usage',
+    type: VarType.object,
+  },
+]
+
+export const FILE_STRUCT: Var[] = [
+  {
+    variable: 'name',
+    type: VarType.string,
+  },
+  {
+    variable: 'size',
+    type: VarType.number,
+  },
+  {
+    variable: 'type',
+    type: VarType.string,
+  },
+  {
+    variable: 'extension',
+    type: VarType.string,
+  },
+  {
+    variable: 'mime_type',
+    type: VarType.string,
+  },
+  {
+    variable: 'transfer_method',
+    type: VarType.string,
+  },
+  {
+    variable: 'url',
+    type: VarType.string,
+  },
+  {
+    variable: 'related_id',
+    type: VarType.string,
+  },
+]
+
+export const DEFAULT_FILE_UPLOAD_SETTING = {
+  allowed_file_upload_methods: ['local_file', 'remote_url'],
+  max_length: 5,
+  allowed_file_types: ['image'],
+  allowed_file_extensions: [],
+}
+
 export const WORKFLOW_DATA_UPDATE = 'WORKFLOW_DATA_UPDATE'
+export const CUSTOM_NODE = 'custom'
+export const CUSTOM_EDGE = 'custom'
+export const DSL_EXPORT_CHECK = 'DSL_EXPORT_CHECK'
+export const DEFAULT_RETRY_MAX = 3
+export const DEFAULT_RETRY_INTERVAL = 100

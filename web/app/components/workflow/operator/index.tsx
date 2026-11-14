@@ -1,53 +1,136 @@
-import { memo } from 'react'
-import { useTranslation } from 'react-i18next'
+import type { Node } from 'reactflow'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MiniMap } from 'reactflow'
-import {
-  useNodesReadOnly,
-  useWorkflow,
-} from '../hooks'
+import UndoRedo from '../header/undo-redo'
+import { useStore } from '../store'
+import { ControlMode } from '../types'
+import VariableInspectPanel from '../variable-inspect'
+import VariableTrigger from '../variable-inspect/trigger'
 import ZoomInOut from './zoom-in-out'
-import { OrganizeGrid } from '@/app/components/base/icons/src/vender/line/layout'
-import TooltipPlus from '@/app/components/base/tooltip-plus'
 
-const Operator = () => {
-  const { t } = useTranslation()
-  const { handleLayout } = useWorkflow()
-  const {
-    nodesReadOnly,
-    getNodesReadOnly,
-  } = useNodesReadOnly()
+type OperatorProps = {
+  handleUndo: () => void
+  handleRedo: () => void
+}
 
-  const goLayout = () => {
-    if (getNodesReadOnly())
-      return
-    handleLayout()
-  }
+const Operator = ({ handleUndo, handleRedo }: OperatorProps) => {
+  const bottomPanelRef = useRef<HTMLDivElement>(null)
+  const bottomPanelSizeRef = useRef<{ width?: number; height?: number }>({})
+  const bottomPanelResizeFrameRef = useRef<number | undefined>(undefined)
+  const [showMiniMap, setShowMiniMap] = useState(true)
+  const showUserCursors = useStore((s) => s.showUserCursors)
+  const setShowUserCursors = useStore((s) => s.setShowUserCursors)
+  const showUserComments = useStore((s) => s.showUserComments)
+  const setShowUserComments = useStore((s) => s.setShowUserComments)
+  const controlMode = useStore((s) => s.controlMode)
+  const isCommentMode = controlMode === ControlMode.Comment
+
+  const handleToggleMiniMap = useCallback(() => {
+    setShowMiniMap((prev) => !prev)
+  }, [])
+
+  const handleToggleUserCursors = useCallback(() => {
+    setShowUserCursors(!showUserCursors)
+  }, [showUserCursors, setShowUserCursors])
+
+  const handleToggleUserComments = useCallback(() => {
+    setShowUserComments(!showUserComments)
+  }, [showUserComments, setShowUserComments])
+
+  const workflowCanvasWidth = useStore((s) => s.workflowCanvasWidth)
+  const rightPanelWidth = useStore((s) => s.rightPanelWidth)
+  const setBottomPanelWidth = useStore((s) => s.setBottomPanelWidth)
+  const setBottomPanelHeight = useStore((s) => s.setBottomPanelHeight)
+
+  const bottomPanelWidth = useMemo(() => {
+    if (!workflowCanvasWidth || !rightPanelWidth) return 'auto'
+    return Math.max(workflowCanvasWidth - rightPanelWidth, 400)
+  }, [workflowCanvasWidth, rightPanelWidth])
+
+  const getMiniMapNodeClassName = useCallback((node: Node) => {
+    return node.data?.selected
+      ? 'bg-workflow-minimap-block border-components-option-card-option-selected-border'
+      : 'bg-workflow-minimap-block'
+  }, [])
+
+  // update bottom panel height
+  useEffect(() => {
+    if (bottomPanelRef.current) {
+      const updateBottomPanelSize = (width: number, height: number) => {
+        if (
+          bottomPanelSizeRef.current.width === width &&
+          bottomPanelSizeRef.current.height === height
+        )
+          return
+
+        bottomPanelSizeRef.current = { width, height }
+        if (bottomPanelResizeFrameRef.current)
+          cancelAnimationFrame(bottomPanelResizeFrameRef.current)
+
+        bottomPanelResizeFrameRef.current = requestAnimationFrame(() => {
+          bottomPanelResizeFrameRef.current = undefined
+          setBottomPanelWidth(width)
+          setBottomPanelHeight(height)
+        })
+      }
+
+      const resizeContainerObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const { inlineSize, blockSize } = entry.borderBoxSize[0]!
+          updateBottomPanelSize(inlineSize, blockSize)
+        }
+      })
+      resizeContainerObserver.observe(bottomPanelRef.current)
+      return () => {
+        if (bottomPanelResizeFrameRef.current) {
+          cancelAnimationFrame(bottomPanelResizeFrameRef.current)
+          bottomPanelResizeFrameRef.current = undefined
+        }
+        resizeContainerObserver.disconnect()
+      }
+    }
+  }, [setBottomPanelHeight, setBottomPanelWidth])
 
   return (
-    <div className={`
-      absolute left-6 bottom-6 z-[9]
-    `}>
-      <MiniMap
-        style={{
-          width: 128,
-          height: 80,
-        }}
-        className='!static !m-0 !w-[128px] !h-[80px] !border-[0.5px] !border-black/[0.08] !rounded-lg !shadow-lg'
-      />
-      <div className='flex items-center mt-1 p-0.5 rounded-lg border-[0.5px] border-gray-100 bg-white shadow-lg text-gray-500'>
-        <ZoomInOut />
-        <TooltipPlus popupContent={t('workflow.panel.organizeBlocks')}>
-          <div
-            className={`
-              ml-[1px] flex items-center justify-center w-8 h-8 cursor-pointer hover:bg-black/5 rounded-lg
-              ${nodesReadOnly && '!cursor-not-allowed opacity-50'}
-            `}
-            onClick={goLayout}
-          >
-            <OrganizeGrid className='w-4 h-4' />
-          </div>
-        </TooltipPlus>
+    <div
+      ref={bottomPanelRef}
+      className="absolute inset-x-0 bottom-0 z-10 px-1"
+      style={{
+        width: bottomPanelWidth,
+      }}
+    >
+      <div className="flex justify-between px-1 pb-2">
+        <div className="flex items-center gap-2">
+          <UndoRedo handleUndo={handleUndo} handleRedo={handleRedo} />
+        </div>
+        <VariableTrigger />
+        <div className="relative">
+          {showMiniMap && (
+            <MiniMap
+              pannable
+              zoomable
+              style={{
+                width: 102,
+                height: 72,
+              }}
+              maskColor="var(--color-workflow-minimap-bg)"
+              nodeClassName={getMiniMapNodeClassName}
+              nodeStrokeWidth={3}
+              className="absolute! bottom-10! z-9 m-0! h-18.25! w-25.75! rounded-lg! border-[0.5px]! border-divider-subtle! bg-background-default-subtle! shadow-md! shadow-shadow-shadow-5!"
+            />
+          )}
+          <ZoomInOut
+            showMiniMap={showMiniMap}
+            onToggleMiniMap={handleToggleMiniMap}
+            showUserCursors={showUserCursors}
+            onToggleUserCursors={handleToggleUserCursors}
+            showUserComments={showUserComments}
+            onToggleUserComments={handleToggleUserComments}
+            isCommentMode={isCommentMode}
+          />
+        </div>
       </div>
+      <VariableInspectPanel />
     </div>
   )
 }

@@ -1,86 +1,77 @@
-import logging
+from __future__ import annotations
 
-from flask_login import current_user
-from flask_restful import Resource, marshal, reqparse
-from werkzeug.exceptions import Forbidden, InternalServerError, NotFound
+from uuid import UUID
 
-import services
-from controllers.console import api
+from flask_restx import Resource
+from sqlalchemy.orm import Session
+
+from controllers.common.rbac import DatasetId, RBACCheck
+from controllers.common.schema import register_response_schema_models, register_schema_models
+from controllers.console import console_ns
 from controllers.console.app.error import (
     CompletionRequestError,
     ProviderModelCurrentlyNotSupportError,
     ProviderNotInitializeError,
     ProviderQuotaExceededError,
 )
-from controllers.console.datasets.error import DatasetNotInitializedError
-from controllers.console.setup import setup_required
-from controllers.console.wraps import account_initialization_required
-from core.errors.error import (
-    LLMBadRequestError,
-    ModelCurrentlyNotSupportError,
-    ProviderTokenNotInitError,
-    QuotaExceededError,
+from controllers.console.app.wraps import with_session
+from controllers.console.datasets.hit_testing_base import DatasetsHitTestingBase, HitTestingPayload
+from controllers.console.wraps import (
+    RBACPermission,
+    account_initialization_required,
+    cloud_edition_billing_rate_limit_check,
+    rbac_permission_required,
+    setup_required,
+    with_current_tenant_id,
+    with_current_user,
 )
-from core.model_runtime.errors.invoke import InvokeError
-from fields.hit_testing_fields import hit_testing_record_fields
+from fields.hit_testing_fields import HitTestingResponse
+from libs.external_api import error_responses
+from libs.helper import dump_response
 from libs.login import login_required
-from services.dataset_service import DatasetService
-from services.hit_testing_service import HitTestingService
+from models import Account
+
+register_schema_models(console_ns, HitTestingPayload)
+register_response_schema_models(console_ns, HitTestingResponse)
 
 
-class HitTestingApi(Resource):
-
+@console_ns.route("/datasets/<uuid:dataset_id>/hit-testing")
+class HitTestingApi(Resource, DatasetsHitTestingBase):
+    @error_responses(
+        CompletionRequestError,
+        ProviderModelCurrentlyNotSupportError,
+        ProviderNotInitializeError,
+        ProviderQuotaExceededError,
+    )
+    @console_ns.doc("test_dataset_retrieval")
+    @console_ns.doc(description="Test dataset knowledge retrieval")
+    @console_ns.doc(params={"dataset_id": "Dataset ID"})
+    @console_ns.expect(console_ns.models[HitTestingPayload.__name__])
+    @console_ns.response(
+        200,
+        "Hit testing completed successfully",
+        model=console_ns.models[HitTestingResponse.__name__],
+    )
+    @console_ns.response(404, "Dataset not found")
+    @console_ns.response(400, "Invalid parameters")
     @setup_required
     @login_required
     @account_initialization_required
-    def post(self, dataset_id):
+    @cloud_edition_billing_rate_limit_check("knowledge")
+    @with_current_tenant_id
+    @with_current_user
+    @rbac_permission_required(RBACCheck(RBACPermission.DATASET_PIPELINE_TEST, DatasetId()))
+    @with_session
+    def post(
+        self, session: Session, current_user: Account, current_tenant_id: str, dataset_id: UUID
+    ) -> dict[str, object]:
         dataset_id_str = str(dataset_id)
 
-        dataset = DatasetService.get_dataset(dataset_id_str)
-        if dataset is None:
-            raise NotFound("Dataset not found.")
+        dataset = self.get_and_validate_dataset(session, dataset_id_str, current_user, current_tenant_id)
+        args = self.parse_args(console_ns.payload)
+        self.hit_testing_args_check(args)
 
-        try:
-            DatasetService.check_dataset_permission(dataset, current_user)
-        except services.errors.account.NoPermissionError as e:
-            raise Forbidden(str(e))
-
-        parser = reqparse.RequestParser()
-        parser.add_argument('query', type=str, location='json')
-        parser.add_argument('retrieval_model', type=dict, required=False, location='json')
-        args = parser.parse_args()
-
-        HitTestingService.hit_testing_args_check(args)
-
-        try:
-            response = HitTestingService.retrieve(
-                dataset=dataset,
-                query=args['query'],
-                account=current_user,
-                retrieval_model=args['retrieval_model'],
-                limit=10
-            )
-
-            return {"query": response['query'], 'records': marshal(response['records'], hit_testing_record_fields)}
-        except services.errors.index.IndexNotInitializedError:
-            raise DatasetNotInitializedError()
-        except ProviderTokenNotInitError as ex:
-            raise ProviderNotInitializeError(ex.description)
-        except QuotaExceededError:
-            raise ProviderQuotaExceededError()
-        except ModelCurrentlyNotSupportError:
-            raise ProviderModelCurrentlyNotSupportError()
-        except LLMBadRequestError:
-            raise ProviderNotInitializeError(
-                "No Embedding Model or Reranking Model available. Please configure a valid provider "
-                "in the Settings -> Model Provider.")
-        except InvokeError as e:
-            raise CompletionRequestError(e.description)
-        except ValueError as e:
-            raise ValueError(str(e))
-        except Exception as e:
-            logging.exception("Hit testing failed.")
-            raise InternalServerError(str(e))
-
-
-api.add_resource(HitTestingApi, '/datasets/<uuid:dataset_id>/hit-testing')
+        return dump_response(
+            HitTestingResponse,
+            self.perform_hit_testing(session, dataset, args, current_user, current_tenant_id),
+        )

@@ -1,107 +1,189 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
-import { useTranslation } from 'react-i18next'
-import RetrievalParamConfig from '../retrieval-param-config'
 import type { RetrievalConfig } from '@/types/app'
-import { RETRIEVE_METHOD } from '@/types/app'
-import RadioCard from '@/app/components/base/radio-card'
-import { PatternRecognition, Semantic } from '@/app/components/base/icons/src/vender/solid/development'
-import { FileSearch02 } from '@/app/components/base/icons/src/vender/solid/files'
-import { useProviderContext } from '@/context/provider-context'
-import { useDefaultModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import { RadioGroup } from '@langgenius/dify-ui/radio-group'
+import { useQuery } from '@tanstack/react-query'
+import * as React from 'react'
+import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import { useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import { DEFAULT_WEIGHTED_SCORE, RerankingModeEnum, WeightedScoreEnum } from '@/models/datasets'
+import { consoleQuery } from '@/service/console'
+import { RETRIEVE_METHOD } from '@/types/app'
+import { EffectColor } from '../../settings/chunk-structure/types'
+import OptionCard from '../../settings/option-card'
+import RetrievalParamConfig from '../retrieval-param-config'
 
-type Props = {
+type Props = Readonly<{
+  disabled?: boolean
   value: RetrievalConfig
+  showMultiModalTip?: boolean
   onChange: (value: RetrievalConfig) => void
-}
+}>
 
 const RetrievalMethodConfig: FC<Props> = ({
-  value: passValue,
+  disabled = false,
+  value,
+  showMultiModalTip = false,
   onChange,
 }) => {
-  const { t } = useTranslation()
-  const { supportRetrievalMethods } = useProviderContext()
-  const { data: rerankDefaultModel } = useDefaultModel(ModelTypeEnum.rerank)
-  const value = (() => {
-    if (!passValue.reranking_model.reranking_model_name) {
-      return {
-        ...passValue,
-        reranking_model: {
-          reranking_provider_name: rerankDefaultModel?.provider.provider || '',
-          reranking_model_name: rerankDefaultModel?.model || '',
-        },
+  const { t } = useTranslation(['dataset', 'datasetSettings'])
+  const { data: retrievalSetting } = useQuery(
+    consoleQuery.datasets.retrievalSetting.get.queryOptions(),
+  )
+  const supportedRetrievalMethods = new Set(retrievalSetting?.retrieval_method ?? [])
+  const { defaultModel: rerankDefaultModel, currentModel: isRerankDefaultModelValid } =
+    useModelListAndDefaultModelAndCurrentProviderAndModel(ModelTypeEnum.rerank)
+
+  const onSwitch = useCallback(
+    (retrieveMethod: RETRIEVE_METHOD) => {
+      if ([RETRIEVE_METHOD.semantic, RETRIEVE_METHOD.fullText].includes(retrieveMethod)) {
+        onChange({
+          ...value,
+          search_method: retrieveMethod,
+          ...(!value.reranking_model.reranking_model_name ||
+          !value.reranking_model.reranking_provider_name
+            ? {
+                reranking_model: {
+                  reranking_provider_name: isRerankDefaultModelValid
+                    ? (rerankDefaultModel?.provider?.provider ?? '')
+                    : '',
+                  reranking_model_name: isRerankDefaultModelValid
+                    ? (rerankDefaultModel?.model ?? '')
+                    : '',
+                },
+                reranking_enable: !!isRerankDefaultModelValid,
+              }
+            : {
+                reranking_enable: true,
+              }),
+        })
       }
-    }
-    return passValue
-  })()
+      if (retrieveMethod === RETRIEVE_METHOD.hybrid) {
+        onChange({
+          ...value,
+          search_method: retrieveMethod,
+          ...(!value.reranking_model.reranking_model_name ||
+          !value.reranking_model.reranking_provider_name
+            ? {
+                reranking_model: {
+                  reranking_provider_name: isRerankDefaultModelValid
+                    ? (rerankDefaultModel?.provider?.provider ?? '')
+                    : '',
+                  reranking_model_name: isRerankDefaultModelValid
+                    ? (rerankDefaultModel?.model ?? '')
+                    : '',
+                },
+                reranking_enable: !!isRerankDefaultModelValid,
+                reranking_mode: isRerankDefaultModelValid
+                  ? RerankingModeEnum.RerankingModel
+                  : RerankingModeEnum.WeightedScore,
+              }
+            : {
+                reranking_enable: true,
+                reranking_mode: RerankingModeEnum.RerankingModel,
+              }),
+          ...(!value.weights
+            ? {
+                weights: {
+                  weight_type: WeightedScoreEnum.Customized,
+                  vector_setting: {
+                    vector_weight: DEFAULT_WEIGHTED_SCORE.other.semantic,
+                    embedding_provider_name: '',
+                    embedding_model_name: '',
+                  },
+                  keyword_setting: {
+                    keyword_weight: DEFAULT_WEIGHTED_SCORE.other.keyword,
+                  },
+                },
+              }
+            : {}),
+        })
+      }
+    },
+    [value, rerankDefaultModel, isRerankDefaultModelValid, onChange],
+  )
+
   return (
-    <div className='space-y-2'>
-      {supportRetrievalMethods.includes(RETRIEVE_METHOD.semantic) && (
-        <RadioCard
-          icon={<Semantic className='w-4 h-4 text-[#7839EE]' />}
-          title={t('dataset.retrieval.semantic_search.title')}
-          description={t('dataset.retrieval.semantic_search.description')}
-          isChosen={value.search_method === RETRIEVE_METHOD.semantic}
-          onChosen={() => onChange({
-            ...value,
-            search_method: RETRIEVE_METHOD.semantic,
-          })}
-          chosenConfig={
-            <RetrievalParamConfig
-              type={RETRIEVE_METHOD.semantic}
-              value={value}
-              onChange={onChange}
-            />
-          }
-        />
+    <RadioGroup<RETRIEVE_METHOD>
+      aria-label={t(($) => $['form.retrievalSetting.method'], { ns: 'datasetSettings' })}
+      value={value.search_method}
+      onValueChange={onSwitch}
+      disabled={disabled}
+      className="flex flex-col items-stretch gap-x-0 gap-y-2"
+    >
+      {supportedRetrievalMethods.has(RETRIEVE_METHOD.semantic) && (
+        <OptionCard
+          id={RETRIEVE_METHOD.semantic}
+          disabled={disabled}
+          icon={<span aria-hidden className="i-custom-vender-knowledge-vector-search size-4" />}
+          iconActiveColor="text-util-colors-purple-purple-600"
+          title={t(($) => $['retrieval.semantic_search.title'], { ns: 'dataset' })}
+          description={t(($) => $['retrieval.semantic_search.description'], { ns: 'dataset' })}
+          isActive={value.search_method === RETRIEVE_METHOD.semantic}
+          effectColor={EffectColor.purple}
+          showEffectColor
+          showChildren={value.search_method === RETRIEVE_METHOD.semantic}
+          className="gap-x-2"
+        >
+          <RetrievalParamConfig
+            type={RETRIEVE_METHOD.semantic}
+            value={value}
+            onChange={onChange}
+            showMultiModalTip={showMultiModalTip}
+            disabled={disabled}
+          />
+        </OptionCard>
       )}
-      {supportRetrievalMethods.includes(RETRIEVE_METHOD.semantic) && (
-        <RadioCard
-          icon={<FileSearch02 className='w-4 h-4 text-[#7839EE]' />}
-          title={t('dataset.retrieval.full_text_search.title')}
-          description={t('dataset.retrieval.full_text_search.description')}
-          isChosen={value.search_method === RETRIEVE_METHOD.fullText}
-          onChosen={() => onChange({
-            ...value,
-            search_method: RETRIEVE_METHOD.fullText,
-          })}
-          chosenConfig={
-            <RetrievalParamConfig
-              type={RETRIEVE_METHOD.fullText}
-              value={value}
-              onChange={onChange}
-            />
-          }
-        />
+      {supportedRetrievalMethods.has(RETRIEVE_METHOD.fullText) && (
+        <OptionCard
+          id={RETRIEVE_METHOD.fullText}
+          disabled={disabled}
+          icon={<span aria-hidden className="i-custom-vender-knowledge-full-text-search size-4" />}
+          iconActiveColor="text-util-colors-purple-purple-600"
+          title={t(($) => $['retrieval.full_text_search.title'], { ns: 'dataset' })}
+          description={t(($) => $['retrieval.full_text_search.description'], { ns: 'dataset' })}
+          isActive={value.search_method === RETRIEVE_METHOD.fullText}
+          effectColor={EffectColor.purple}
+          showEffectColor
+          showChildren={value.search_method === RETRIEVE_METHOD.fullText}
+          className="gap-x-2"
+        >
+          <RetrievalParamConfig
+            type={RETRIEVE_METHOD.fullText}
+            value={value}
+            onChange={onChange}
+            showMultiModalTip={showMultiModalTip}
+            disabled={disabled}
+          />
+        </OptionCard>
       )}
-      {supportRetrievalMethods.includes(RETRIEVE_METHOD.semantic) && (
-        <RadioCard
-          icon={<PatternRecognition className='w-4 h-4 text-[#7839EE]' />}
-          title={
-            <div className='flex items-center space-x-1'>
-              <div>{t('dataset.retrieval.hybrid_search.title')}</div>
-              <div className='flex h-full items-center px-1.5 rounded-md border border-[#E0EAFF] text-xs font-medium text-[#444CE7]'>{t('dataset.retrieval.hybrid_search.recommend')}</div>
-            </div>
-          }
-          description={t('dataset.retrieval.hybrid_search.description')}
-          isChosen={value.search_method === RETRIEVE_METHOD.hybrid}
-          onChosen={() => onChange({
-            ...value,
-            search_method: RETRIEVE_METHOD.hybrid,
-            reranking_enable: true,
-          })}
-          chosenConfig={
-            <RetrievalParamConfig
-              type={RETRIEVE_METHOD.hybrid}
-              value={value}
-              onChange={onChange}
-            />
-          }
-        />
+      {supportedRetrievalMethods.has(RETRIEVE_METHOD.hybrid) && (
+        <OptionCard
+          id={RETRIEVE_METHOD.hybrid}
+          disabled={disabled}
+          icon={<span aria-hidden className="i-custom-vender-knowledge-hybrid-search size-4" />}
+          iconActiveColor="text-util-colors-purple-purple-600"
+          title={t(($) => $['retrieval.hybrid_search.title'], { ns: 'dataset' })}
+          description={t(($) => $['retrieval.hybrid_search.description'], { ns: 'dataset' })}
+          isActive={value.search_method === RETRIEVE_METHOD.hybrid}
+          effectColor={EffectColor.purple}
+          showEffectColor
+          isRecommended
+          showChildren={value.search_method === RETRIEVE_METHOD.hybrid}
+          className="gap-x-2"
+        >
+          <RetrievalParamConfig
+            type={RETRIEVE_METHOD.hybrid}
+            value={value}
+            onChange={onChange}
+            showMultiModalTip={showMultiModalTip}
+            disabled={disabled}
+          />
+        </OptionCard>
       )}
-    </div>
+    </RadioGroup>
   )
 }
 export default React.memo(RetrievalMethodConfig)

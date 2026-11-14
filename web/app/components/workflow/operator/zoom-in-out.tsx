@@ -1,151 +1,294 @@
 import type { FC } from 'react'
 import {
-  Fragment,
-  memo,
-  useCallback,
-  useState,
-} from 'react'
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuPortal,
+  MenuPositioner,
+  MenuSeparator,
+  MenuTrigger,
+} from '@langgenius/dify-ui/menu'
+import { useAtomValue } from 'jotai'
+import { Fragment, memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import {
-  useReactFlow,
-  useViewport,
-} from 'reactflow'
-import {
-  useNodesSyncDraft,
-  useWorkflowReadOnly,
-} from '../hooks'
-import {
-  PortalToFollowElem,
-  PortalToFollowElemContent,
-  PortalToFollowElemTrigger,
-} from '@/app/components/base/portal-to-follow-elem'
-import { SearchLg } from '@/app/components/base/icons/src/vender/line/general'
-import { ChevronDown } from '@/app/components/base/icons/src/vender/line/arrows'
+import { useReactFlow, useViewport } from 'reactflow'
+import { editorCollaborationEnabledAtom } from '@/app/components/workflow/editor-resource/state'
+import { useNodesSyncDraft } from '../hooks/use-nodes-sync-draft'
+import { useWorkflowReadOnly } from '../hooks/use-workflow'
+import { handleWorkflowMenuKeyDown } from '../shortcuts/handle-workflow-menu-key-down'
+import { ShortcutKbd } from '../shortcuts/shortcut-kbd'
+import TipPopup from './tip-popup'
 
-const ZoomInOut: FC = () => {
-  const { t } = useTranslation()
-  const {
-    zoomIn,
-    zoomOut,
-    zoomTo,
-    fitView,
-  } = useReactFlow()
+const ZoomType = {
+  zoomToFit: 'zoomToFit',
+  zoomTo25: 'zoomTo25',
+  zoomTo50: 'zoomTo50',
+  zoomTo75: 'zoomTo75',
+  zoomTo100: 'zoomTo100',
+  zoomTo200: 'zoomTo200',
+  toggleUserComments: 'toggleUserComments',
+  toggleUserCursors: 'toggleUserCursors',
+  toggleMiniMap: 'toggleMiniMap',
+} as const
+
+type ZoomType = (typeof ZoomType)[keyof typeof ZoomType]
+
+type ZoomInOutProps = {
+  showMiniMap?: boolean
+  onToggleMiniMap?: () => void
+  showUserCursors?: boolean
+  onToggleUserCursors?: () => void
+  showUserComments?: boolean
+  onToggleUserComments?: () => void
+  isCommentMode?: boolean
+}
+
+const ZoomInOut: FC<ZoomInOutProps> = ({
+  showMiniMap = true,
+  onToggleMiniMap,
+  showUserCursors = true,
+  onToggleUserCursors,
+  showUserComments = true,
+  onToggleUserComments,
+  isCommentMode = false,
+}) => {
+  const { t } = useTranslation(['workflow'])
+  const [open, setOpen] = useState(false)
+  const { zoomIn, zoomOut, zoomTo, fitView } = useReactFlow()
   const { zoom } = useViewport()
   const { handleSyncWorkflowDraft } = useNodesSyncDraft()
-  const [open, setOpen] = useState(false)
-  const {
-    workflowReadOnly,
-    getWorkflowReadOnly,
-  } = useWorkflowReadOnly()
+  const { workflowReadOnly, getWorkflowReadOnly } = useWorkflowReadOnly()
+  const isCollaborationEnabled = useAtomValue(editorCollaborationEnabledAtom)
 
-  const ZOOM_IN_OUT_OPTIONS = [
+  const zoomOptions = [
     [
       {
-        key: 'in',
-        text: t('workflow.operator.zoomIn'),
+        key: ZoomType.zoomTo200,
+        text: '200%',
       },
       {
-        key: 'out',
-        text: t('workflow.operator.zoomOut'),
+        key: ZoomType.zoomTo100,
+        text: '100%',
+      },
+      {
+        key: ZoomType.zoomTo75,
+        text: '75%',
+      },
+      {
+        key: ZoomType.zoomTo50,
+        text: '50%',
+      },
+      {
+        key: ZoomType.zoomTo25,
+        text: '25%',
+      },
+      {
+        key: ZoomType.zoomToFit,
+        text: t(($) => $['operator.zoomToFit'], { ns: 'workflow' }),
       },
     ],
-    [
-      {
-        key: 'to50',
-        text: t('workflow.operator.zoomTo50'),
-      },
-      {
-        key: 'to100',
-        text: t('workflow.operator.zoomTo100'),
-      },
-    ],
-    [
-      {
-        key: 'fit',
-        text: t('workflow.operator.zoomToFit'),
-      },
-    ],
+    isCollaborationEnabled
+      ? [
+          {
+            key: ZoomType.toggleUserComments,
+            text: t(($) => $['operator.showUserComments'], { ns: 'workflow' }),
+            checked: showUserComments,
+          },
+          {
+            key: ZoomType.toggleUserCursors,
+            text: t(($) => $['operator.showUserCursors'], { ns: 'workflow' }),
+            checked: showUserCursors,
+          },
+          {
+            key: ZoomType.toggleMiniMap,
+            text: t(($) => $['operator.showMiniMap'], { ns: 'workflow' }),
+            checked: showMiniMap,
+          },
+        ]
+      : [
+          {
+            key: ZoomType.toggleMiniMap,
+            text: t(($) => $['operator.showMiniMap'], { ns: 'workflow' }),
+            checked: showMiniMap,
+          },
+        ],
   ]
 
-  const handleZoom = (type: string) => {
-    if (workflowReadOnly)
+  const handleZoom = (type: ZoomType) => {
+    if (workflowReadOnly) return
+
+    if (type === ZoomType.zoomToFit) fitView()
+
+    if (type === ZoomType.zoomTo25) zoomTo(0.25)
+
+    if (type === ZoomType.zoomTo50) zoomTo(0.5)
+
+    if (type === ZoomType.zoomTo75) zoomTo(0.75)
+
+    if (type === ZoomType.zoomTo100) zoomTo(1)
+
+    if (type === ZoomType.zoomTo200) zoomTo(2)
+
+    if (type === ZoomType.toggleUserComments) {
+      if (!isCommentMode) onToggleUserComments?.()
+
       return
+    }
 
-    if (type === 'in')
-      zoomIn()
+    if (type === ZoomType.toggleUserCursors) {
+      onToggleUserCursors?.()
+      return
+    }
 
-    if (type === 'out')
-      zoomOut()
-
-    if (type === 'fit')
-      fitView()
-
-    if (type === 'to50')
-      zoomTo(0.5)
-
-    if (type === 'to100')
-      zoomTo(1)
+    if (type === ZoomType.toggleMiniMap) {
+      onToggleMiniMap?.()
+      return
+    }
 
     handleSyncWorkflowDraft()
   }
 
-  const handleTrigger = useCallback(() => {
-    if (getWorkflowReadOnly())
-      return
-
-    setOpen(v => !v)
-  }, [getWorkflowReadOnly])
+  function selectZoom(type: ZoomType) {
+    handleZoom(type)
+    setOpen(false)
+  }
 
   return (
-    <PortalToFollowElem
-      placement='top-start'
-      open={open}
-      onOpenChange={setOpen}
-      offset={{
-        mainAxis: 4,
-        crossAxis: -2,
-      }}
+    <div
+      className={`h-9 cursor-pointer rounded-lg border-[0.5px] border-components-actionbar-border bg-components-actionbar-bg p-0.5 text-[13px] shadow-lg backdrop-blur-[5px] hover:bg-state-base-hover ${workflowReadOnly && 'cursor-not-allowed! opacity-50'} `}
     >
-      <PortalToFollowElemTrigger asChild onClick={handleTrigger}>
-        <div className={`
-          flex items-center px-2 h-8 cursor-pointer text-[13px] hover:bg-gray-50 rounded-lg
-          ${open && 'bg-gray-50'}
-          ${workflowReadOnly && '!cursor-not-allowed opacity-50'}
-        `}>
-          <SearchLg className='mr-1 w-4 h-4' />
-          <div className='w-[34px]'>{parseFloat(`${zoom * 100}`).toFixed(0)}%</div>
-          <ChevronDown className='ml-1 w-4 h-4' />
-        </div>
-      </PortalToFollowElemTrigger>
-      <PortalToFollowElemContent className='z-10'>
-        <div className='w-[168px] rounded-lg border-[0.5px] border-gray-200 bg-white shadow-lg'>
-          {
-            ZOOM_IN_OUT_OPTIONS.map((options, i) => (
-              <Fragment key={i}>
-                {
-                  i !== 0 && (
-                    <div className='h-[1px] bg-gray-100' />
-                  )
-                }
-                <div className='p-1'>
-                  {
-                    options.map(option => (
-                      <div
-                        key={option.key}
-                        className='flex items-center px-3 h-8 rounded-lg hover:bg-gray-50 cursor-pointer text-sm text-gray-700'
-                        onClick={() => handleZoom(option.key)}
-                      >
-                        {option.text}
+      <div className="flex h-8 w-24.5 items-center justify-between rounded-lg">
+        <TipPopup
+          title={t(($) => $['operator.zoomOut'], { ns: 'workflow' })}
+          shortcut="workflow.zoom-out"
+        >
+          <button
+            type="button"
+            aria-label={t(($) => $['operator.zoomOut'], { ns: 'workflow' })}
+            disabled={zoom <= 0.25}
+            className={`flex size-8 items-center justify-center rounded-lg ${zoom <= 0.25 ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-black/5'}`}
+            onClick={(e) => {
+              if (zoom <= 0.25) return
+
+              e.stopPropagation()
+              zoomOut()
+            }}
+          >
+            <span
+              aria-hidden
+              className="i-ri-zoom-out-line size-4 text-text-tertiary hover:text-text-secondary"
+            />
+          </button>
+        </TipPopup>
+        <Menu open={open} onOpenChange={setOpen}>
+          <MenuTrigger
+            disabled={getWorkflowReadOnly()}
+            className="flex h-8 w-8.5 items-center justify-center rounded-lg system-sm-medium text-text-tertiary hover:bg-black/5 hover:text-text-secondary data-popup-open:bg-black/5 data-popup-open:text-text-secondary"
+          >
+            {Number.parseFloat(`${zoom * 100}`).toFixed(0)}%
+          </MenuTrigger>
+          <MenuPortal>
+            <MenuPositioner sideOffset={4} side="top" align="start" alignOffset={-2}>
+              <MenuPopup
+                onKeyDown={(event) => {
+                  if (workflowReadOnly) return
+                  handleWorkflowMenuKeyDown(event, [
+                    ['workflow.zoom-to-fit', () => selectZoom(ZoomType.zoomToFit)],
+                    ['workflow.zoom-to-100', () => selectZoom(ZoomType.zoomTo100)],
+                    ['workflow.zoom-to-50', () => selectZoom(ZoomType.zoomTo50)],
+                  ])
+                }}
+              >
+                <div className="w-48 rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg-blur shadow-lg backdrop-blur-[5px]">
+                  {zoomOptions.map((options, groupIndex) => (
+                    <Fragment key={options[0]!.key}>
+                      {groupIndex !== 0 && <MenuSeparator className="my-0" />}
+                      <div className="p-1">
+                        {options.map((option) =>
+                          'checked' in option ? (
+                            <MenuCheckboxItem
+                              key={option.key}
+                              className="gap-2 px-3 py-1.5 system-md-regular text-text-secondary"
+                              checked={option.checked}
+                              disabled={option.key === ZoomType.toggleUserComments && isCommentMode}
+                              closeOnClick
+                              onCheckedChange={() => selectZoom(option.key)}
+                            >
+                              <span
+                                aria-hidden
+                                className={
+                                  option.checked
+                                    ? 'i-ri-check-line size-4 text-text-accent'
+                                    : 'size-4'
+                                }
+                              />
+                              <span>{option.text}</span>
+                            </MenuCheckboxItem>
+                          ) : (
+                            <MenuItem
+                              key={option.key}
+                              className="justify-between px-3 py-1.5 system-md-regular text-text-secondary"
+                              onClick={() => selectZoom(option.key)}
+                            >
+                              <div className="flex items-center gap-2">
+                                {option.key === ZoomType.zoomToFit && (
+                                  <span
+                                    aria-hidden
+                                    className="i-ri-fullscreen-line size-4 text-text-tertiary"
+                                  />
+                                )}
+                                {option.key !== ZoomType.zoomToFit && (
+                                  <span aria-hidden className="size-4" />
+                                )}
+                                <span>{option.text}</span>
+                              </div>
+                              <div className="flex items-center space-x-0.5">
+                                {option.key === ZoomType.zoomToFit && (
+                                  <ShortcutKbd shortcut="workflow.zoom-to-fit" />
+                                )}
+                                {option.key === ZoomType.zoomTo50 && (
+                                  <ShortcutKbd shortcut="workflow.zoom-to-50" />
+                                )}
+                                {option.key === ZoomType.zoomTo100 && (
+                                  <ShortcutKbd shortcut="workflow.zoom-to-100" />
+                                )}
+                              </div>
+                            </MenuItem>
+                          ),
+                        )}
                       </div>
-                    ))
-                  }
+                    </Fragment>
+                  ))}
                 </div>
-              </Fragment>
-            ))
-          }
-        </div>
-      </PortalToFollowElemContent>
-    </PortalToFollowElem>
+              </MenuPopup>
+            </MenuPositioner>
+          </MenuPortal>
+        </Menu>
+        <TipPopup
+          title={t(($) => $['operator.zoomIn'], { ns: 'workflow' })}
+          shortcut="workflow.zoom-in"
+        >
+          <button
+            type="button"
+            aria-label={t(($) => $['operator.zoomIn'], { ns: 'workflow' })}
+            disabled={zoom >= 2}
+            className={`flex size-8 items-center justify-center rounded-lg ${zoom >= 2 ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-black/5'}`}
+            onClick={(e) => {
+              if (zoom >= 2) return
+
+              e.stopPropagation()
+              zoomIn()
+            }}
+          >
+            <span
+              aria-hidden
+              className="i-ri-zoom-in-line size-4 text-text-tertiary hover:text-text-secondary"
+            />
+          </button>
+        </TipPopup>
+      </div>
+    </div>
   )
 }
 

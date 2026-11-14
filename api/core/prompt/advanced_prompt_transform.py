@@ -1,9 +1,15 @@
-from typing import Optional, Union
+from collections.abc import Mapping, Sequence
+from typing import cast
 
 from core.app.entities.app_invoke_entities import ModelConfigWithCredentialsEntity
-from core.file.file_obj import FileVar
+from core.helper.code_executor.jinja2.jinja2_formatter import Jinja2Formatter
 from core.memory.token_buffer_memory import TokenBufferMemory
-from core.model_runtime.entities.message_entities import (
+from core.model_manager import ModelInstance
+from core.prompt.entities.advanced_prompt_entities import ChatModelMessage, CompletionModelPromptTemplate, MemoryConfig
+from core.prompt.prompt_transform import PromptTransform
+from core.prompt.utils.prompt_template_parser import PromptTemplateParser
+from graphon.file import File, file_manager
+from graphon.model_runtime.entities import (
     AssistantPromptMessage,
     PromptMessage,
     PromptMessageRole,
@@ -11,101 +17,126 @@ from core.model_runtime.entities.message_entities import (
     TextPromptMessageContent,
     UserPromptMessage,
 )
-from core.prompt.entities.advanced_prompt_entities import ChatModelMessage, CompletionModelPromptTemplate, MemoryConfig
-from core.prompt.prompt_transform import PromptTransform
-from core.prompt.simple_prompt_transform import ModelMode
-from core.prompt.utils.prompt_template_parser import PromptTemplateParser
+from graphon.model_runtime.entities.message_entities import ImagePromptMessageContent, PromptMessageContentUnionTypes
+from graphon.runtime import VariablePool
+from graphon.variables.template_resolution import convert_template
 
 
 class AdvancedPromptTransform(PromptTransform):
     """
     Advanced Prompt Transform for Workflow LLM Node.
     """
-    def __init__(self, with_variable_tmpl: bool = False) -> None:
+
+    def __init__(
+        self,
+        with_variable_tmpl: bool = False,
+        image_detail_config: ImagePromptMessageContent.DETAIL = ImagePromptMessageContent.DETAIL.LOW,
+    ):
         self.with_variable_tmpl = with_variable_tmpl
+        self.image_detail_config = image_detail_config
 
-    def get_prompt(self, prompt_template: Union[list[ChatModelMessage], CompletionModelPromptTemplate],
-                   inputs: dict,
-                   query: str,
-                   files: list[FileVar],
-                   context: Optional[str],
-                   memory_config: Optional[MemoryConfig],
-                   memory: Optional[TokenBufferMemory],
-                   model_config: ModelConfigWithCredentialsEntity) -> list[PromptMessage]:
-        inputs = {key: str(value) for key, value in inputs.items()}
-
+    def get_prompt(
+        self,
+        *,
+        prompt_template: Sequence[ChatModelMessage] | CompletionModelPromptTemplate,
+        inputs: Mapping[str, str],
+        query: str,
+        files: Sequence[File],
+        context: str | None,
+        memory_config: MemoryConfig | None,
+        memory: TokenBufferMemory | None,
+        model_config: ModelConfigWithCredentialsEntity | None = None,
+        model_instance: ModelInstance | None = None,
+        image_detail_config: ImagePromptMessageContent.DETAIL | None = None,
+    ) -> list[PromptMessage]:
         prompt_messages = []
 
-        model_mode = ModelMode.value_of(model_config.mode)
-        if model_mode == ModelMode.COMPLETION:
-            prompt_messages = self._get_completion_model_prompt_messages(
-                prompt_template=prompt_template,
-                inputs=inputs,
-                query=query,
-                files=files,
-                context=context,
-                memory_config=memory_config,
-                memory=memory,
-                model_config=model_config
-            )
-        elif model_mode == ModelMode.CHAT:
-            prompt_messages = self._get_chat_model_prompt_messages(
-                prompt_template=prompt_template,
-                inputs=inputs,
-                query=query,
-                files=files,
-                context=context,
-                memory_config=memory_config,
-                memory=memory,
-                model_config=model_config
-            )
+        match prompt_template:
+            case CompletionModelPromptTemplate():
+                prompt_messages = self._get_completion_model_prompt_messages(
+                    prompt_template=prompt_template,
+                    inputs=inputs,
+                    query=query,
+                    files=files,
+                    context=context,
+                    memory_config=memory_config,
+                    memory=memory,
+                    model_config=model_config,
+                    model_instance=model_instance,
+                    image_detail_config=image_detail_config,
+                )
+            case list() if all(isinstance(item, ChatModelMessage) for item in prompt_template):
+                prompt_messages = self._get_chat_model_prompt_messages(
+                    prompt_template=prompt_template,
+                    inputs=inputs,
+                    query=query,
+                    files=files,
+                    context=context,
+                    memory_config=memory_config,
+                    memory=memory,
+                    model_config=model_config,
+                    model_instance=model_instance,
+                    image_detail_config=image_detail_config,
+                )
 
         return prompt_messages
 
-    def _get_completion_model_prompt_messages(self,
-                                              prompt_template: CompletionModelPromptTemplate,
-                                              inputs: dict,
-                                              query: Optional[str],
-                                              files: list[FileVar],
-                                              context: Optional[str],
-                                              memory_config: Optional[MemoryConfig],
-                                              memory: Optional[TokenBufferMemory],
-                                              model_config: ModelConfigWithCredentialsEntity) -> list[PromptMessage]:
+    def _get_completion_model_prompt_messages(
+        self,
+        prompt_template: CompletionModelPromptTemplate,
+        inputs: Mapping[str, str],
+        query: str | None,
+        files: Sequence[File],
+        context: str | None,
+        memory_config: MemoryConfig | None,
+        memory: TokenBufferMemory | None,
+        model_config: ModelConfigWithCredentialsEntity | None = None,
+        model_instance: ModelInstance | None = None,
+        image_detail_config: ImagePromptMessageContent.DETAIL | None = None,
+    ) -> list[PromptMessage]:
         """
         Get completion model prompt messages.
         """
         raw_prompt = prompt_template.text
 
-        prompt_messages = []
+        prompt_messages: list[PromptMessage] = []
 
-        prompt_template = PromptTemplateParser(template=raw_prompt, with_variable_tmpl=self.with_variable_tmpl)
-        prompt_inputs = {k: inputs[k] for k in prompt_template.variable_keys if k in inputs}
+        if prompt_template.edition_type == "basic" or not prompt_template.edition_type:
+            parser = PromptTemplateParser(template=raw_prompt, with_variable_tmpl=self.with_variable_tmpl)
+            prompt_inputs: Mapping[str, str] = {k: inputs[k] for k in parser.variable_keys if k in inputs}
 
-        prompt_inputs = self._set_context_variable(context, prompt_template, prompt_inputs)
+            prompt_inputs = self._set_context_variable(context, parser, prompt_inputs)
 
-        if memory and memory_config:
-            role_prefix = memory_config.role_prefix
-            prompt_inputs = self._set_histories_variable(
-                memory=memory,
-                memory_config=memory_config,
-                raw_prompt=raw_prompt,
-                role_prefix=role_prefix,
-                prompt_template=prompt_template,
-                prompt_inputs=prompt_inputs,
-                model_config=model_config
-            )
+            if memory and memory_config and memory_config.role_prefix:
+                role_prefix = memory_config.role_prefix
+                prompt_inputs = self._set_histories_variable(
+                    memory=memory,
+                    memory_config=memory_config,
+                    raw_prompt=raw_prompt,
+                    role_prefix=role_prefix,
+                    parser=parser,
+                    prompt_inputs=prompt_inputs,
+                    model_config=model_config,
+                    model_instance=model_instance,
+                )
 
-        if query:
-            prompt_inputs = self._set_query_variable(query, prompt_template, prompt_inputs)
+            if query:
+                prompt_inputs = self._set_query_variable(query, parser, prompt_inputs)
 
-        prompt = prompt_template.format(
-            prompt_inputs
-        )
+            prompt = parser.format(prompt_inputs)
+        else:
+            prompt = raw_prompt
+            prompt_inputs = inputs
+
+            prompt = Jinja2Formatter.format(prompt, prompt_inputs)
 
         if files:
-            prompt_message_contents = [TextPromptMessageContent(data=prompt)]
+            prompt_message_contents: list[PromptMessageContentUnionTypes] = []
             for file in files:
-                prompt_message_contents.append(file.prompt_message_content)
+                prompt_message_contents.append(
+                    file_manager.to_prompt_message_content(file, image_detail_config=image_detail_config)
+                )
+            prompt_message_contents.append(TextPromptMessageContent(data=prompt))
 
             prompt_messages.append(UserPromptMessage(content=prompt_message_contents))
         else:
@@ -113,48 +144,85 @@ class AdvancedPromptTransform(PromptTransform):
 
         return prompt_messages
 
-    def _get_chat_model_prompt_messages(self,
-                                        prompt_template: list[ChatModelMessage],
-                                        inputs: dict,
-                                        query: Optional[str],
-                                        files: list[FileVar],
-                                        context: Optional[str],
-                                        memory_config: Optional[MemoryConfig],
-                                        memory: Optional[TokenBufferMemory],
-                                        model_config: ModelConfigWithCredentialsEntity) -> list[PromptMessage]:
+    def _get_chat_model_prompt_messages(
+        self,
+        prompt_template: list[ChatModelMessage],
+        inputs: Mapping[str, str],
+        query: str | None,
+        files: Sequence[File],
+        context: str | None,
+        memory_config: MemoryConfig | None,
+        memory: TokenBufferMemory | None,
+        model_config: ModelConfigWithCredentialsEntity | None = None,
+        model_instance: ModelInstance | None = None,
+        image_detail_config: ImagePromptMessageContent.DETAIL | None = None,
+    ) -> list[PromptMessage]:
         """
         Get chat model prompt messages.
         """
-        raw_prompt_list = prompt_template
-
-        prompt_messages = []
-
-        for prompt_item in raw_prompt_list:
+        prompt_messages: list[PromptMessage] = []
+        for prompt_item in prompt_template:
             raw_prompt = prompt_item.text
+            edition_type = prompt_item.edition_type or "basic"
+            match edition_type:
+                case "basic":
+                    if self.with_variable_tmpl:
+                        vp = VariablePool.empty()
+                        for k, v in inputs.items():
+                            if k.startswith("#"):
+                                vp.add(k[1:-1].split("."), v)
+                        raw_prompt = raw_prompt.replace("{{#context#}}", context or "")
+                        prompt = convert_template(vp, raw_prompt).text
+                    else:
+                        parser = PromptTemplateParser(template=raw_prompt, with_variable_tmpl=self.with_variable_tmpl)
+                        prompt_inputs: Mapping[str, str] = {k: inputs[k] for k in parser.variable_keys if k in inputs}
+                        prompt_inputs = self._set_context_variable(
+                            context=context, parser=parser, prompt_inputs=prompt_inputs
+                        )
+                        prompt = parser.format(prompt_inputs)
+                case "jinja2":
+                    prompt = raw_prompt
+                    prompt_inputs = inputs
+                    prompt = Jinja2Formatter.format(template=prompt, inputs=prompt_inputs)
+                case _:
+                    raise ValueError(f"Invalid edition type: {prompt_item.edition_type}")
+            match prompt_item.role:
+                case PromptMessageRole.USER:
+                    prompt_messages.append(UserPromptMessage(content=prompt))
+                case PromptMessageRole.SYSTEM:
+                    if prompt:
+                        prompt_messages.append(SystemPromptMessage(content=prompt))
+                case PromptMessageRole.ASSISTANT:
+                    prompt_messages.append(AssistantPromptMessage(content=prompt))
+                case PromptMessageRole.TOOL:
+                    pass
 
-            prompt_template = PromptTemplateParser(template=raw_prompt, with_variable_tmpl=self.with_variable_tmpl)
-            prompt_inputs = {k: inputs[k] for k in prompt_template.variable_keys if k in inputs}
-
-            prompt_inputs = self._set_context_variable(context, prompt_template, prompt_inputs)
-
-            prompt = prompt_template.format(
-                prompt_inputs
+        if query and memory_config and memory_config.query_prompt_template:
+            parser = PromptTemplateParser(
+                template=memory_config.query_prompt_template, with_variable_tmpl=self.with_variable_tmpl
             )
+            prompt_inputs = {k: inputs[k] for k in parser.variable_keys if k in inputs}
+            prompt_inputs["#sys.query#"] = query
 
-            if prompt_item.role == PromptMessageRole.USER:
-                prompt_messages.append(UserPromptMessage(content=prompt))
-            elif prompt_item.role == PromptMessageRole.SYSTEM and prompt:
-                prompt_messages.append(SystemPromptMessage(content=prompt))
-            elif prompt_item.role == PromptMessageRole.ASSISTANT:
-                prompt_messages.append(AssistantPromptMessage(content=prompt))
+            prompt_inputs = self._set_context_variable(context, parser, prompt_inputs)
 
+            query = parser.format(prompt_inputs)
+
+        prompt_message_contents: list[PromptMessageContentUnionTypes] = []
         if memory and memory_config:
-            prompt_messages = self._append_chat_histories(memory, memory_config, prompt_messages, model_config)
-
-            if files:
-                prompt_message_contents = [TextPromptMessageContent(data=query)]
+            prompt_messages = self._append_chat_histories(
+                memory,
+                memory_config,
+                prompt_messages,
+                model_config=model_config,
+                model_instance=model_instance,
+            )
+            if files and query is not None:
                 for file in files:
-                    prompt_message_contents.append(file.prompt_message_content)
+                    prompt_message_contents.append(
+                        file_manager.to_prompt_message_content(file, image_detail_config=image_detail_config)
+                    )
+                prompt_message_contents.append(TextPromptMessageContent(data=query))
 
                 prompt_messages.append(UserPromptMessage(content=prompt_message_contents))
             else:
@@ -165,21 +233,27 @@ class AdvancedPromptTransform(PromptTransform):
                 last_message = prompt_messages[-1] if prompt_messages else None
                 if last_message and last_message.role == PromptMessageRole.USER:
                     # get last user message content and add files
-                    prompt_message_contents = [TextPromptMessageContent(data=last_message.content)]
                     for file in files:
-                        prompt_message_contents.append(file.prompt_message_content)
+                        prompt_message_contents.append(
+                            file_manager.to_prompt_message_content(file, image_detail_config=image_detail_config)
+                        )
+                    prompt_message_contents.append(TextPromptMessageContent(data=cast(str, last_message.content)))
 
                     last_message.content = prompt_message_contents
                 else:
-                    prompt_message_contents = [TextPromptMessageContent(data='')]  # not for query
                     for file in files:
-                        prompt_message_contents.append(file.prompt_message_content)
+                        prompt_message_contents.append(
+                            file_manager.to_prompt_message_content(file, image_detail_config=image_detail_config)
+                        )
+                    prompt_message_contents.append(TextPromptMessageContent(data=""))
 
                     prompt_messages.append(UserPromptMessage(content=prompt_message_contents))
             else:
-                prompt_message_contents = [TextPromptMessageContent(data=query)]
                 for file in files:
-                    prompt_message_contents.append(file.prompt_message_content)
+                    prompt_message_contents.append(
+                        file_manager.to_prompt_message_content(file, image_detail_config=image_detail_config)
+                    )
+                prompt_message_contents.append(TextPromptMessageContent(data=query))
 
                 prompt_messages.append(UserPromptMessage(content=prompt_message_contents))
         elif query:
@@ -187,51 +261,64 @@ class AdvancedPromptTransform(PromptTransform):
 
         return prompt_messages
 
-    def _set_context_variable(self, context: str, prompt_template: PromptTemplateParser, prompt_inputs: dict) -> dict:
-        if '#context#' in prompt_template.variable_keys:
+    def _set_context_variable(
+        self, context: str | None, parser: PromptTemplateParser, prompt_inputs: Mapping[str, str]
+    ) -> Mapping[str, str]:
+        prompt_inputs = dict(prompt_inputs)
+        if "#context#" in parser.variable_keys:
             if context:
-                prompt_inputs['#context#'] = context
+                prompt_inputs["#context#"] = context
             else:
-                prompt_inputs['#context#'] = ''
+                prompt_inputs["#context#"] = ""
 
         return prompt_inputs
 
-    def _set_query_variable(self, query: str, prompt_template: PromptTemplateParser, prompt_inputs: dict) -> dict:
-        if '#query#' in prompt_template.variable_keys:
+    def _set_query_variable(
+        self, query: str, parser: PromptTemplateParser, prompt_inputs: Mapping[str, str]
+    ) -> Mapping[str, str]:
+        prompt_inputs = dict(prompt_inputs)
+        if "#query#" in parser.variable_keys:
             if query:
-                prompt_inputs['#query#'] = query
+                prompt_inputs["#query#"] = query
             else:
-                prompt_inputs['#query#'] = ''
+                prompt_inputs["#query#"] = ""
 
         return prompt_inputs
 
-    def _set_histories_variable(self, memory: TokenBufferMemory,
-                                memory_config: MemoryConfig,
-                                raw_prompt: str,
-                                role_prefix: MemoryConfig.RolePrefix,
-                                prompt_template: PromptTemplateParser,
-                                prompt_inputs: dict,
-                                model_config: ModelConfigWithCredentialsEntity) -> dict:
-        if '#histories#' in prompt_template.variable_keys:
+    def _set_histories_variable(
+        self,
+        memory: TokenBufferMemory,
+        memory_config: MemoryConfig,
+        raw_prompt: str,
+        role_prefix: MemoryConfig.RolePrefix,
+        parser: PromptTemplateParser,
+        prompt_inputs: Mapping[str, str],
+        model_config: ModelConfigWithCredentialsEntity | None = None,
+        model_instance: ModelInstance | None = None,
+    ) -> Mapping[str, str]:
+        prompt_inputs = dict(prompt_inputs)
+        if "#histories#" in parser.variable_keys:
             if memory:
-                inputs = {'#histories#': '', **prompt_inputs}
-                prompt_template = PromptTemplateParser(template=raw_prompt, with_variable_tmpl=self.with_variable_tmpl)
-                prompt_inputs = {k: inputs[k] for k in prompt_template.variable_keys if k in inputs}
-                tmp_human_message = UserPromptMessage(
-                    content=prompt_template.format(prompt_inputs)
-                )
+                inputs = {"#histories#": "", **prompt_inputs}
+                parser = PromptTemplateParser(template=raw_prompt, with_variable_tmpl=self.with_variable_tmpl)
+                prompt_inputs = {k: inputs[k] for k in parser.variable_keys if k in inputs}
+                tmp_human_message = UserPromptMessage(content=parser.format(prompt_inputs))
 
-                rest_tokens = self._calculate_rest_token([tmp_human_message], model_config)
+                rest_tokens = self._calculate_rest_token(
+                    [tmp_human_message],
+                    model_config=model_config,
+                    model_instance=model_instance,
+                )
 
                 histories = self._get_history_messages_from_memory(
                     memory=memory,
                     memory_config=memory_config,
                     max_token_limit=rest_tokens,
                     human_prefix=role_prefix.user,
-                    ai_prefix=role_prefix.assistant
+                    ai_prefix=role_prefix.assistant,
                 )
-                prompt_inputs['#histories#'] = histories
+                prompt_inputs["#histories#"] = histories
             else:
-                prompt_inputs['#histories#'] = ''
+                prompt_inputs["#histories#"] = ""
 
         return prompt_inputs

@@ -1,17 +1,18 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
-import { useBoolean, useClickAway } from 'ahooks'
-import cn from 'classnames'
-import { ChevronSelectorVertical } from '@/app/components/base/icons/src/vender/line/arrows'
-import { Check } from '@/app/components/base/icons/src/vender/line/general'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useClickAway } from 'ahooks'
+import * as React from 'react'
+import { useState } from 'react'
+
 type Item = {
   value: string
   label: string
 }
-type Props = {
-  trigger?: JSX.Element
-  DropDownIcon?: any
+type Props = Readonly<{
+  className?: string
+  trigger?: React.JSX.Element
+  dropdownIconClassName?: string
   noLeft?: boolean
   options: Item[]
   allOptions?: Item[]
@@ -24,11 +25,12 @@ type Props = {
   itemClassName?: string
   readonly?: boolean
   showChecked?: boolean
-}
+}>
 
 const TypeSelector: FC<Props> = ({
+  className,
   trigger,
-  DropDownIcon = ChevronSelectorVertical,
+  dropdownIconClassName = 'i-custom-vender-line-arrows-chevron-selector-vertical',
   noLeft,
   options: list,
   allOptions,
@@ -43,50 +45,79 @@ const TypeSelector: FC<Props> = ({
   showChecked,
 }) => {
   const noValue = value === '' || value === undefined || value === null
-  const item = allOptions ? allOptions.find(item => item.value === value) : list.find(item => item.value === value)
-  const [showOption, { setFalse: setHide, toggle: toggleShow }] = useBoolean(false)
+  const item = allOptions
+    ? allOptions.find((item) => item.value === value)
+    : list.find((item) => item.value === value)
+  const [showOption, setShowOption] = useState(false)
   const ref = React.useRef(null)
   useClickAway(() => {
-    setHide()
+    setShowOption(false)
   }, ref)
   return (
-    <div className={cn(!trigger && !noLeft && 'left-[-8px]', 'relative')} ref={ref}>
-      {trigger
-        ? (
+    <div
+      className={cn(!trigger && !noLeft && '-left-2', 'relative select-none', className)}
+      ref={ref}
+    >
+      {trigger ? (
+        <div
+          onClick={() => setShowOption((isShown) => !isShown)}
+          className={cn(!readonly && 'cursor-pointer')}
+        >
+          {trigger}
+        </div>
+      ) : (
+        <div
+          onClick={() => setShowOption((isShown) => !isShown)}
+          className={cn(
+            showOption && 'bg-state-base-hover',
+            'flex h-5 cursor-pointer items-center rounded-md pr-0.5 pl-1 text-xs font-semibold text-text-secondary hover:bg-state-base-hover',
+          )}
+        >
           <div
-            onClick={toggleShow}
+            className={cn(
+              'text-sm font-semibold',
+              uppercase && 'uppercase',
+              noValue && 'text-text-tertiary',
+              triggerClassName,
+            )}
           >
-            {trigger}
+            {!noValue ? item?.label : placeholder}
           </div>
-        )
-        : (
-          <div
-            onClick={toggleShow}
-            className={cn(showOption && 'bg-black/5', 'flex items-center h-5 pl-1 pr-0.5 rounded-md text-xs font-semibold text-gray-700 cursor-pointer hover:bg-black/5')}>
-            <div className={cn(triggerClassName, 'text-sm font-semibold', uppercase && 'uppercase', noValue && 'text-gray-400')}>{!noValue ? item?.label : placeholder}</div>
-            {!readonly && <DropDownIcon className='w-3 h-3 ' />}
-          </div>
-        )}
+          {!readonly && <span aria-hidden className={cn(dropdownIconClassName, 'size-3')} />}
+        </div>
+      )}
 
-      {(showOption && !readonly) && (
-        <div className={cn(popupClassName, 'absolute z-10 top-[24px] w-[120px]  p-1 border border-gray-200 shadow-lg rounded-lg bg-white')}>
-          {list.map(item => (
+      {showOption && !readonly && (
+        <div
+          className={cn(
+            'absolute top-6 z-10 w-30 rounded-lg border border-components-panel-border bg-components-panel-bg p-1 shadow-lg select-none',
+            popupClassName,
+          )}
+        >
+          {list.map((item) => (
             <div
               key={item.value}
               onClick={() => {
-                setHide()
+                setShowOption(false)
                 onChange(item.value)
               }}
-              className={cn(itemClassName, uppercase && 'uppercase', 'flex items-center h-[30px] justify-between min-w-[44px] px-3 rounded-lg cursor-pointer text-[13px] font-medium text-gray-700 hover:bg-gray-50')}
+              className={cn(
+                itemClassName,
+                uppercase && 'uppercase',
+                'flex h-7.5 min-w-11 cursor-pointer items-center justify-between rounded-lg px-3 text-[13px] font-medium text-text-secondary hover:bg-state-base-hover',
+              )}
             >
               <div>{item.label}</div>
-              {showChecked && item.value === value && <Check className='text-primary-600 w-4 h-4' />}
+              {showChecked && item.value === value && (
+                <span
+                  aria-hidden
+                  className="i-custom-vender-line-general-check size-4 text-text-primary"
+                />
+              )}
             </div>
-          ))
-          }
+          ))}
         </div>
-      )
-      }
+      )}
     </div>
   )
 }

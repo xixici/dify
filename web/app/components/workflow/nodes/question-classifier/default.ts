@@ -1,22 +1,42 @@
+import type { TFunction } from 'i18next'
 import type { NodeDefault } from '../../types'
-import { BlockEnum } from '../../types'
 import type { QuestionClassifierNodeType } from './types'
-import { ALL_CHAT_AVAILABLE_BLOCKS, ALL_COMPLETION_AVAILABLE_BLOCKS } from '@/app/components/workflow/constants'
+import { BlockClassification } from '@/app/components/workflow/block-selector/types'
+import { BlockEnum } from '@/app/components/workflow/types'
+import { genNodeMetaData } from '@/app/components/workflow/utils'
 
-const i18nPrefix = 'workflow'
+const i18nPrefix = ''
 
+const metaData = genNodeMetaData({
+  classification: BlockClassification.QuestionUnderstand,
+  sort: 1,
+  type: BlockEnum.QuestionClassifier,
+})
 const nodeDefault: NodeDefault<QuestionClassifierNodeType> = {
+  metaData,
   defaultValue: {
     query_variable_selector: [],
     model: {
       provider: '',
       name: '',
-      mode: 'chat',
+      mode: 'chat' as const,
       completion_params: {
         temperature: 0.7,
       },
     },
     classes: [
+      {
+        id: '1',
+        name: '',
+        label: 'CLASS 1',
+      },
+      {
+        id: '2',
+        name: '',
+        label: 'CLASS 2',
+      },
+    ],
+    _targetBranches: [
       {
         id: '1',
         name: '',
@@ -26,30 +46,48 @@ const nodeDefault: NodeDefault<QuestionClassifierNodeType> = {
         name: '',
       },
     ],
+    vision: {
+      enabled: false,
+    },
   },
-  getAvailablePrevNodes(isChatMode: boolean) {
-    const nodes = isChatMode
-      ? ALL_CHAT_AVAILABLE_BLOCKS
-      : ALL_COMPLETION_AVAILABLE_BLOCKS.filter(type => type !== BlockEnum.End)
-    return nodes
-  },
-  getAvailableNextNodes(isChatMode: boolean) {
-    const nodes = isChatMode ? ALL_CHAT_AVAILABLE_BLOCKS : ALL_COMPLETION_AVAILABLE_BLOCKS
-    return nodes.filter(type => type !== BlockEnum.VariableAssigner)
-  },
-  checkValid(payload: QuestionClassifierNodeType, t: any) {
+  checkValid(payload: QuestionClassifierNodeType, t: TFunction<['workflow']>) {
     let errorMessages = ''
-    if (!errorMessages && (!payload.query_variable_selector || payload.query_variable_selector.length === 0))
-      errorMessages = t(`${i18nPrefix}.errorMsg.fieldRequired`, { field: t(`${i18nPrefix}.nodes.questionClassifiers.inputVars`) })
+    if (
+      !errorMessages &&
+      (!payload.query_variable_selector || payload.query_variable_selector.length === 0)
+    )
+      errorMessages = t(($) => $[`${i18nPrefix}errorMsg.fieldRequired`], {
+        ns: 'workflow',
+        field: t(($) => $[`${i18nPrefix}nodes.questionClassifiers.inputVars`], { ns: 'workflow' }),
+      })
 
     if (!errorMessages && !payload.model.provider)
-      errorMessages = t(`${i18nPrefix}.errorMsg.fieldRequired`, { field: t(`${i18nPrefix}.nodes.questionClassifiers.model`) })
+      errorMessages = t(($) => $[`${i18nPrefix}errorMsg.fieldRequired`], {
+        ns: 'workflow',
+        field: t(($) => $[`${i18nPrefix}nodes.questionClassifiers.model`], { ns: 'workflow' }),
+      })
 
     if (!errorMessages && (!payload.classes || payload.classes.length === 0))
-      errorMessages = t(`${i18nPrefix}.errorMsg.fieldRequired`, { field: t(`${i18nPrefix}.nodes.questionClassifiers.class`) })
+      errorMessages = t(($) => $[`${i18nPrefix}errorMsg.fieldRequired`], {
+        ns: 'workflow',
+        field: t(($) => $[`${i18nPrefix}nodes.questionClassifiers.class`], { ns: 'workflow' }),
+      })
 
-    if (!errorMessages && (payload.classes.some(item => !item.name)))
-      errorMessages = t(`${i18nPrefix}.errorMsg.fieldRequired`, { field: t(`${i18nPrefix}.nodes.questionClassifiers.topicName`) })
+    if (!errorMessages && payload.classes.some((item) => !item.name))
+      errorMessages = t(($) => $[`${i18nPrefix}errorMsg.fieldRequired`], {
+        ns: 'workflow',
+        field: t(($) => $[`${i18nPrefix}nodes.questionClassifiers.topicName`], { ns: 'workflow' }),
+      })
+
+    if (
+      !errorMessages &&
+      payload.vision?.enabled &&
+      !payload.vision.configs?.variable_selector?.length
+    )
+      errorMessages = t(($) => $[`${i18nPrefix}errorMsg.fieldRequired`], {
+        ns: 'workflow',
+        field: t(($) => $[`${i18nPrefix}errorMsg.fields.visionVariable`], { ns: 'workflow' }),
+      })
     return {
       isValid: !errorMessages,
       errorMessage: errorMessages,

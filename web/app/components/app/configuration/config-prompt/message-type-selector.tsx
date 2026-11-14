@@ -1,49 +1,53 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
 import { useBoolean, useClickAway } from 'ahooks'
-import cn from 'classnames'
+import * as React from 'react'
 import { PromptRole } from '@/models/debug'
-import { ChevronSelectorVertical } from '@/app/components/base/icons/src/vender/line/arrows'
-type Props = {
+
+type Props = Readonly<{
   value: PromptRole
   onChange: (value: PromptRole) => void
-}
+}>
 
 const allTypes = [PromptRole.system, PromptRole.user, PromptRole.assistant]
-const MessageTypeSelector: FC<Props> = ({
-  value,
-  onChange,
-}) => {
+const MessageTypeSelector: FC<Props> = ({ value, onChange }) => {
   const [showOption, { setFalse: setHide, toggle: toggleShow }] = useBoolean(false)
   const ref = React.useRef(null)
   useClickAway(() => {
     setHide()
   }, ref)
   return (
-    <div className='relative left-[-8px]' ref={ref}>
+    <div className="relative -left-2" ref={ref}>
       <div
         onClick={toggleShow}
-        className={cn(showOption && 'bg-indigo-100', 'flex items-center h-7 pl-1.5 pr-1 space-x-0.5 rounded-lg cursor-pointer text-indigo-800')}>
-        <div className='text-sm font-semibold uppercase'>{value}</div>
-        <ChevronSelectorVertical className='w-3 h-3 ' />
+        className={cn(
+          showOption && 'bg-indigo-100',
+          'flex h-7 cursor-pointer items-center space-x-0.5 rounded-lg pr-1 pl-1.5 text-indigo-800',
+        )}
+      >
+        <div className="text-sm font-semibold uppercase">{value}</div>
+        <span
+          aria-hidden
+          className="i-custom-vender-line-arrows-chevron-selector-vertical size-3"
+        />
       </div>
       {showOption && (
-        <div className='absolute z-10 top-[30px] p-1 border border-gray-200 shadow-lg rounded-lg bg-white'>
-          {allTypes.map(type => (
+        <div className="absolute top-7.5 z-10 rounded-lg border border-components-panel-border bg-components-panel-bg p-1 shadow-lg">
+          {allTypes.map((type) => (
             <div
               key={type}
               onClick={() => {
                 setHide()
                 onChange(type)
               }}
-              className='flex items-center h-9 min-w-[44px] px-3 rounded-lg cursor-pointer text-sm font-medium text-gray-700 uppercase hover:bg-gray-50'
-            >{type}</div>
-          ))
-          }
+              className="flex h-9 min-w-11 cursor-pointer items-center rounded-lg px-3 text-sm font-medium text-text-secondary uppercase hover:bg-state-base-hover"
+            >
+              {type}
+            </div>
+          ))}
         </div>
-      )
-      }
+      )}
     </div>
   )
 }

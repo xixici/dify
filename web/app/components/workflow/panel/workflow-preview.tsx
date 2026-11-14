@@ -1,149 +1,321 @@
-import {
-  memo,
-  useEffect,
-  useRef,
-  useState,
-} from 'react'
-import cn from 'classnames'
+import type { HumanInputFormSubmitData } from '@/app/components/base/chat/chat/answer/human-input-content/type'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
+import copy from 'copy-to-clipboard'
+import { useAtomValue } from 'jotai'
+import { memo, useCallback, useEffect, useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import OutputPanel from '../run/output-panel'
+import { useStore as useReactFlowStore } from 'reactflow'
+import ReasoningPanel from '@/app/components/base/chat/chat/answer/reasoning-panel'
+import { LoadingPlaceholder } from '@/app/components/base/loading-placeholder'
+import ResizeHandle from '@/app/components/base/resize-handle'
+import { toast } from '@/app/notifications'
+import { ENABLE_HITL_IM } from '@/config'
+import { submitHumanInputForm } from '@/service/workflow'
+import { editorAppIdAtom } from '../editor-resource/state'
+import { useWorkflowInteractions } from '../hooks/use-workflow-panel-interactions'
 import ResultPanel from '../run/result-panel'
+import ResultText from '../run/result-text'
 import TracingPanel from '../run/tracing-panel'
-import {
-  useWorkflowRun,
-} from '../hooks'
 import { useStore } from '../store'
-import {
-  WorkflowRunningStatus,
-} from '../types'
+import { WorkflowRunningStatus } from '../types'
+import { formatWorkflowRunIdentifier } from '../utils'
+import HumanInputFilledFormList from './human-input-filled-form-list'
+import HumanInputFormList from './human-input-form-list'
 import InputsPanel from './inputs-panel'
-import Loading from '@/app/components/base/loading'
-import { XClose } from '@/app/components/base/icons/src/vender/line/general'
+import { getPreviewPanelMaxWidth } from './panel-width'
 
 const WorkflowPreview = () => {
-  const { t } = useTranslation()
-  const { handleRunSetting } = useWorkflowRun()
-  const showInputsPanel = useStore(s => s.showInputsPanel)
-  const workflowRunningData = useStore(s => s.workflowRunningData)
+  const { t } = useTranslation(['common', 'runLog', 'workflow'])
+  const panelId = useId()
+  const appId = useAtomValue(editorAppIdAtom)
+  const { handleCancelDebugAndPreviewPanel } = useWorkflowInteractions()
+  const workflowRunningData = useStore((s) => s.workflowRunningData)
+  const isListening = useStore((s) => s.isListening)
+  const showInputsPanel = useStore((s) => s.showInputsPanel)
+  const workflowCanvasWidth = useStore((s) => s.workflowCanvasWidth)
+  const panelWidth = useStore((s) => s.previewPanelWidth)
+  const setPreviewPanelWidth = useStore((s) => s.setPreviewPanelWidth)
+  const hasSelectedNode = useReactFlowStore((s) => s.getNodes().some((node) => node.data.selected))
+  const maxPanelWidth = getPreviewPanelMaxWidth(workflowCanvasWidth, hasSelectedNode)
+  const showDebugAndPreviewPanel = useStore((s) => s.showDebugAndPreviewPanel)
+  const humanInputFormDataList = useStore((s) => s.workflowRunningData?.humanInputFormDataList)
+  const humanInputFilledFormDataList = useStore(
+    (s) => s.workflowRunningData?.humanInputFilledFormDataList,
+  )
   const [currentTab, setCurrentTab] = useState<string>(showInputsPanel ? 'INPUT' : 'TRACING')
 
   const switchTab = async (tab: string) => {
     setCurrentTab(tab)
   }
 
-  const [height, setHieght] = useState(0)
-  const ref = useRef<HTMLDivElement>(null)
-
-  const adjustResultHeight = () => {
-    if (ref.current)
-      setHieght(ref.current?.clientHeight - 16 - 16 - 2 - 1)
-  }
+  useEffect(() => {
+    if (showDebugAndPreviewPanel && showInputsPanel) switchTab('INPUT')
+  }, [showDebugAndPreviewPanel, showInputsPanel])
 
   useEffect(() => {
-    adjustResultHeight()
+    if (isListening) switchTab('DETAIL')
+  }, [isListening])
+
+  useEffect(() => {
+    const status = workflowRunningData?.result.status
+    if (!workflowRunningData) return
+
+    if (
+      (status === WorkflowRunningStatus.Succeeded || status === WorkflowRunningStatus.Failed) &&
+      !workflowRunningData.resultText &&
+      !workflowRunningData.result.files?.length
+    )
+      switchTab('DETAIL')
+    if (status === WorkflowRunningStatus.Paused) switchTab('RESULT')
+  }, [workflowRunningData])
+
+  const [isResizing, setIsResizing] = useState(false)
+
+  const startResizing = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }, [])
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false)
+  }, [])
+
+  const resize = useCallback(
+    (e: MouseEvent) => {
+      if (isResizing) {
+        const newWidth = window.innerWidth - e.clientX
+        if (newWidth >= 400 && newWidth <= maxPanelWidth) setPreviewPanelWidth(newWidth)
+      }
+    },
+    [isResizing, maxPanelWidth, setPreviewPanelWidth],
+  )
+
+  useEffect(() => {
+    window.addEventListener('mousemove', resize)
+    window.addEventListener('mouseup', stopResizing)
+    return () => {
+      window.removeEventListener('mousemove', resize)
+      window.removeEventListener('mouseup', stopResizing)
+    }
+  }, [resize, stopResizing])
+
+  const handleSubmitHumanInputForm = useCallback(
+    async (formToken: string, formData: HumanInputFormSubmitData) => {
+      const form = humanInputFormDataList?.find((item) => item.form_token === formToken)
+      await submitHumanInputForm(
+        formToken,
+        formData,
+        form?.form_version,
+        ENABLE_HITL_IM ? { silent: true } : undefined,
+      )
+    },
+    [humanInputFormDataList],
+  )
+
+  const handleOpenTracingTab = useCallback(() => {
+    switchTab('TRACING')
   }, [])
 
   return (
-    <div className={`
-      flex flex-col w-[420px] h-full rounded-l-2xl border-[0.5px] border-gray-200 shadow-xl bg-white
-    `}>
-      <div className='flex items-center justify-between p-4 pb-1 text-base font-semibold text-gray-900'>
-        {`Test Run${!workflowRunningData?.result.sequence_number ? '' : `#${workflowRunningData?.result.sequence_number}`}`}
-        {showInputsPanel && workflowRunningData?.result?.status !== WorkflowRunningStatus.Running && (
-          <div className='p-1 cursor-pointer' onClick={() => handleRunSetting(true)}>
-            <XClose className='w-4 h-4 text-gray-500' />
-          </div>
-        )}
+    <div
+      id={panelId}
+      className="relative flex h-full flex-col rounded-s-2xl border-[0.5px] border-components-panel-border bg-components-panel-bg shadow-xl"
+      style={{ width: `${panelWidth}px` }}
+    >
+      <ResizeHandle
+        side="left"
+        value={panelWidth}
+        min={400}
+        max={maxPanelWidth}
+        controls={panelId}
+        label={t(($) => $['singleRun.testRun'], { ns: 'workflow' })}
+        onResize={setPreviewPanelWidth}
+        className="absolute inset-s-0.75 top-1/2 bottom-0 z-50 h-6 w-0.75 cursor-col-resize bg-state-base-handle"
+        onMouseDown={startResizing}
+      />
+      <div className="flex items-center justify-between p-4 pb-1 text-base font-semibold text-text-primary">
+        {`Test Run${formatWorkflowRunIdentifier(workflowRunningData?.result.finished_at, workflowRunningData?.result.status)}`}
+        <button
+          type="button"
+          aria-label={t(($) => $['operation.close'], { ns: 'common' })}
+          className="cursor-pointer border-none bg-transparent p-1 focus-visible:ring-1 focus-visible:ring-components-input-border-active focus-visible:outline-hidden"
+          onClick={() => handleCancelDebugAndPreviewPanel()}
+        >
+          <span className="i-ri-close-line size-4 text-text-tertiary" aria-hidden="true" />
+        </button>
       </div>
-      <div className='grow relative flex flex-col'>
-        <div className='shrink-0 flex items-center px-4 border-b-[0.5px] border-[rgba(0,0,0,0.05)]'>
+      <div className="relative flex grow flex-col">
+        <div className="flex shrink-0 items-center border-b-[0.5px] border-divider-subtle px-4">
           {showInputsPanel && (
             <div
               className={cn(
-                'mr-6 py-3 border-b-2 border-transparent text-[13px] font-semibold leading-[18px] text-gray-400 cursor-pointer',
-                currentTab === 'INPUT' && '!border-[rgb(21,94,239)] text-gray-700',
+                'me-6 cursor-pointer border-b-2 border-transparent py-3 text-[13px] leading-4.5 font-semibold text-text-tertiary',
+                currentTab === 'INPUT' && 'border-[rgb(21,94,239)]! text-text-secondary',
               )}
               onClick={() => switchTab('INPUT')}
-            >{t('runLog.input')}</div>
+            >
+              {t(($) => $.input, { ns: 'runLog' })}
+            </div>
           )}
           <div
             className={cn(
-              'mr-6 py-3 border-b-2 border-transparent text-[13px] font-semibold leading-[18px] text-gray-400 cursor-pointer',
-              currentTab === 'RESULT' && '!border-[rgb(21,94,239)] text-gray-700',
-              !workflowRunningData && 'opacity-30 !cursor-not-allowed',
+              'me-6 cursor-pointer border-b-2 border-transparent py-3 text-[13px] leading-4.5 font-semibold text-text-tertiary',
+              currentTab === 'RESULT' && 'border-[rgb(21,94,239)]! text-text-secondary',
+              !workflowRunningData && 'cursor-not-allowed! opacity-30',
             )}
             onClick={() => {
-              if (!workflowRunningData)
-                return
+              if (!workflowRunningData) return
               switchTab('RESULT')
             }}
-          >{t('runLog.result')}</div>
+          >
+            {t(($) => $.result, { ns: 'runLog' })}
+          </div>
           <div
             className={cn(
-              'mr-6 py-3 border-b-2 border-transparent text-[13px] font-semibold leading-[18px] text-gray-400 cursor-pointer',
-              currentTab === 'DETAIL' && '!border-[rgb(21,94,239)] text-gray-700',
-              !workflowRunningData && 'opacity-30 !cursor-not-allowed',
+              'me-6 cursor-pointer border-b-2 border-transparent py-3 text-[13px] leading-4.5 font-semibold text-text-tertiary',
+              currentTab === 'DETAIL' && 'border-[rgb(21,94,239)]! text-text-secondary',
+              !workflowRunningData && 'cursor-not-allowed! opacity-30',
             )}
             onClick={() => {
-              if (!workflowRunningData)
-                return
+              if (!workflowRunningData) return
               switchTab('DETAIL')
             }}
-          >{t('runLog.detail')}</div>
+          >
+            {t(($) => $.detail, { ns: 'runLog' })}
+          </div>
           <div
             className={cn(
-              'mr-6 py-3 border-b-2 border-transparent text-[13px] font-semibold leading-[18px] text-gray-400 cursor-pointer',
-              currentTab === 'TRACING' && '!border-[rgb(21,94,239)] text-gray-700',
-              !workflowRunningData && 'opacity-30 !cursor-not-allowed',
+              'me-6 cursor-pointer border-b-2 border-transparent py-3 text-[13px] leading-4.5 font-semibold text-text-tertiary',
+              currentTab === 'TRACING' && 'border-[rgb(21,94,239)]! text-text-secondary',
+              !workflowRunningData && 'cursor-not-allowed! opacity-30',
             )}
             onClick={() => {
-              if (!workflowRunningData)
-                return
+              if (!workflowRunningData) return
               switchTab('TRACING')
             }}
-          >{t('runLog.tracing')}</div>
+          >
+            {t(($) => $.tracing, { ns: 'runLog' })}
+          </div>
         </div>
-        <div ref={ref} className={cn(
-          'grow bg-white h-0 overflow-y-auto rounded-b-2xl',
-          (currentTab === 'RESULT' || currentTab === 'TRACING') && '!bg-gray-50',
-        )}>
-          {currentTab === 'INPUT' && (
+        <div
+          className={cn(
+            'h-0 grow overflow-y-auto rounded-b-2xl bg-components-panel-bg',
+            (currentTab === 'RESULT' || currentTab === 'TRACING') && 'bg-background-section-burn!',
+          )}
+        >
+          {currentTab === 'INPUT' && showInputsPanel && (
             <InputsPanel onRun={() => switchTab('RESULT')} />
           )}
           {currentTab === 'RESULT' && (
-            <OutputPanel
-              isRunning={workflowRunningData?.result?.status === WorkflowRunningStatus.Running || !workflowRunningData?.result}
-              outputs={workflowRunningData?.result?.outputs}
-              error={workflowRunningData?.result?.error}
-              height={height}
-            />
+            <div className="p-2">
+              {humanInputFormDataList && humanInputFormDataList.length > 0 && (
+                <HumanInputFormList
+                  humanInputFormDataList={humanInputFormDataList}
+                  onHumanInputFormSubmit={handleSubmitHumanInputForm}
+                />
+              )}
+              {humanInputFilledFormDataList && humanInputFilledFormDataList.length > 0 && (
+                <HumanInputFilledFormList
+                  humanInputFilledFormDataList={humanInputFilledFormDataList}
+                />
+              )}
+              {workflowRunningData?.reasoningContent &&
+                Object.values(workflowRunningData.reasoningContent).some(Boolean) && (
+                  <ReasoningPanel
+                    content={workflowRunningData.reasoningContent}
+                    // freeze the timer once the answer starts streaming — reasoningFinished and status only flip at run end
+                    done={
+                      !!workflowRunningData?.resultText?.trim() ||
+                      !!workflowRunningData?.reasoningFinished ||
+                      workflowRunningData?.result?.status !== WorkflowRunningStatus.Running
+                    }
+                  />
+                )}
+              <ResultText
+                isRunning={
+                  workflowRunningData?.result?.status === WorkflowRunningStatus.Running ||
+                  !workflowRunningData?.result
+                }
+                isPaused={workflowRunningData?.result?.status === WorkflowRunningStatus.Paused}
+                outputs={workflowRunningData?.resultText}
+                allFiles={workflowRunningData?.result?.files}
+                error={workflowRunningData?.result?.error}
+                onClick={() => switchTab('DETAIL')}
+              />
+              {workflowRunningData?.result.status === WorkflowRunningStatus.Succeeded &&
+                workflowRunningData?.resultText &&
+                typeof workflowRunningData?.resultText === 'string' && (
+                  <Button
+                    className={cn('ms-4 mb-4')}
+                    onClick={() => {
+                      const content = workflowRunningData?.resultText
+                      if (typeof content === 'string') copy(content)
+                      else copy(JSON.stringify(content))
+                      toast.success(t(($) => $['actionMsg.copySuccessfully'], { ns: 'common' }))
+                    }}
+                  >
+                    <span className="i-ri-clipboard-line size-3.5" />
+                    <div>{t(($) => $['operation.copy'], { ns: 'common' })}</div>
+                  </Button>
+                )}
+            </div>
           )}
           {currentTab === 'DETAIL' && (
             <ResultPanel
               inputs={workflowRunningData?.result?.inputs}
+              inputs_truncated={workflowRunningData?.result?.inputs_truncated}
+              process_data={workflowRunningData?.result?.process_data}
+              process_data_truncated={workflowRunningData?.result?.process_data_truncated}
               outputs={workflowRunningData?.result?.outputs}
+              outputs_truncated={workflowRunningData?.result?.outputs_truncated}
+              outputs_full_content={workflowRunningData?.result?.outputs_full_content}
               status={workflowRunningData?.result?.status || ''}
+              workflowRunId={workflowRunningData?.result?.id}
               error={workflowRunningData?.result?.error}
               elapsed_time={workflowRunningData?.result?.elapsed_time}
               total_tokens={workflowRunningData?.result?.total_tokens}
               created_at={workflowRunningData?.result?.created_at}
               created_by={(workflowRunningData?.result?.created_by as any)?.name}
               steps={workflowRunningData?.result?.total_steps}
+              exceptionCounts={workflowRunningData?.result?.exceptions_count}
+              externalTrace={
+                appId && workflowRunningData?.result?.id
+                  ? { appId, kind: 'workflow', workflowRunId: workflowRunningData.result.id }
+                  : undefined
+              }
+              onOpenTracingTab={handleOpenTracingTab}
             />
           )}
           {currentTab === 'DETAIL' && !workflowRunningData?.result && (
-            <div className='flex h-full items-center justify-center bg-white'>
-              <Loading />
+            <div className="flex h-full items-center justify-center bg-components-panel-bg">
+              <LoadingPlaceholder />
             </div>
           )}
           {currentTab === 'TRACING' && (
             <TracingPanel
+              key={workflowRunningData?.result.id}
+              externalTraceRun={
+                appId && workflowRunningData?.result?.id
+                  ? { appId, workflowRunId: workflowRunningData.result.id }
+                  : undefined
+              }
+              className="bg-background-section-burn"
               list={workflowRunningData?.tracing || []}
+              workflowRun={
+                appId && workflowRunningData?.result.id
+                  ? {
+                      appId,
+                      runId: workflowRunningData.result.id,
+                      status: workflowRunningData.result.status,
+                    }
+                  : undefined
+              }
             />
           )}
           {currentTab === 'TRACING' && !workflowRunningData?.tracing?.length && (
-            <div className='flex h-full items-center justify-center bg-gray-50'>
-              <Loading />
+            <div className="flex h-full items-center justify-center bg-background-section-burn!">
+              <LoadingPlaceholder />
             </div>
           )}
         </div>

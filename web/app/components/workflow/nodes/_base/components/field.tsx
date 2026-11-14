@@ -1,57 +1,90 @@
 'use client'
-import type { FC } from 'react'
-import React from 'react'
-import cn from 'classnames'
-import { useBoolean } from 'ahooks'
-import { HelpCircle } from '@/app/components/base/icons/src/vender/line/general'
-import TooltipPlus from '@/app/components/base/tooltip-plus'
-import { ChevronRight } from '@/app/components/base/icons/src/vender/line/arrows'
-type Props = {
-  title: string
-  tooltip?: string
-  supportFold?: boolean
-  children?: JSX.Element | string | null
-  operations?: JSX.Element
-  inline?: boolean
-}
+import type { FC, ReactNode } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Infotip, InfotipContent, InfotipTrigger } from '@langgenius/dify-ui/infotip'
+import { RiArrowDownSLine } from '@remixicon/react'
+import * as React from 'react'
+import { useState } from 'react'
 
-const Filed: FC<Props> = ({
+type Props = Readonly<{
+  className?: string
+  title: ReactNode
+  tooltip?: ReactNode
+  isSubTitle?: boolean
+  supportFold?: boolean
+  children?: React.JSX.Element | string | null
+  operations?: React.JSX.Element
+  inline?: boolean
+  required?: boolean
+  warningDot?: boolean
+}>
+
+const Field: FC<Props> = ({
+  className,
   title,
+  isSubTitle,
   tooltip,
   children,
   operations,
   inline,
   supportFold,
+  required,
+  warningDot,
 }) => {
-  const [fold, {
-    toggle: toggleFold,
-  }] = useBoolean(true)
-  return (
-    <div className={cn(inline && 'flex justify-between items-center', supportFold && 'cursor-pointer')}>
-      <div
-        onClick={() => supportFold && toggleFold()}
-        className='flex justify-between items-center'>
-        <div className='flex items-center h-6'>
-          <div className='text-[13px] font-medium text-gray-700 uppercase'>{title}</div>
-          {tooltip && (
-            <TooltipPlus popupContent={
-              <div className='w-[120px]'>
-                {tooltip}
-              </div>}>
-              <HelpCircle className='w-3.5 h-3.5 ml-0.5 text-gray-400' />
-            </TooltipPlus>
-          )}
+  const titleId = React.useId()
 
+  const [fold, setFold] = useState(true)
+
+  return (
+    <div className={cn(className, inline && 'flex w-full items-center justify-between')}>
+      <div
+        onClick={() => supportFold && setFold((isFolded) => !isFolded)}
+        className={cn('flex items-center justify-between', supportFold && 'cursor-pointer')}
+      >
+        <div className="flex h-6 items-center">
+          <div
+            id={titleId}
+            className={cn(
+              'relative',
+              isSubTitle
+                ? 'system-xs-medium-uppercase text-text-tertiary'
+                : 'system-sm-semibold-uppercase text-text-secondary',
+            )}
+          >
+            {warningDot && (
+              <span
+                aria-hidden
+                className="absolute top-1/2 -left-2.25 size-1.25 -translate-y-1/2 rounded-full bg-text-warning-secondary"
+              />
+            )}
+            {title}{' '}
+            {required && (
+              <span aria-hidden className="text-text-destructive">
+                *
+              </span>
+            )}
+          </div>
+          {!!tooltip && (
+            <Infotip>
+              <InfotipTrigger aria-labelledby={titleId} className="ml-1" />
+              <InfotipContent aria-labelledby={titleId}>{tooltip}</InfotipContent>
+            </Infotip>
+          )}
         </div>
-        <div className='flex'>
-          {operations && <div>{operations}</div>}
+        <div className="flex">
+          {!!operations && <div>{operations}</div>}
           {supportFold && (
-            <ChevronRight className='w-3.5 h-3.5 text-gray-500 cursor-pointer transform transition-transform' style={{ transform: fold ? 'rotate(0deg)' : 'rotate(90deg)' }} />
+            <RiArrowDownSLine
+              className="size-4 cursor-pointer text-text-tertiary transition-transform"
+              style={{ transform: fold ? 'rotate(-90deg)' : 'rotate(0deg)' }}
+            />
           )}
         </div>
       </div>
-      {children && (!supportFold || (supportFold && !fold)) && <div className={cn(!inline && 'mt-1')}>{children}</div>}
+      {!!(children && (!supportFold || (supportFold && !fold))) && (
+        <div className={cn(!inline && 'mt-1')}>{children}</div>
+      )}
     </div>
   )
 }
-export default React.memo(Filed)
+export default React.memo(Field)

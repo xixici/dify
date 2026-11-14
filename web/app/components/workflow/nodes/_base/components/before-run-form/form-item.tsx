@@ -1,72 +1,131 @@
 'use client'
 import type { FC } from 'react'
-import React, { useCallback } from 'react'
-import { useTranslation } from 'react-i18next'
-import produce from 'immer'
 import type { InputVar } from '../../../../types'
-import { BlockEnum, InputVarType } from '../../../../types'
-import CodeEditor from '../editor/code-editor'
-import { CodeLanguage } from '../../../code/types'
-import Select from '@/app/components/base/select'
+import type { FileEntity } from '@/app/components/base/file-uploader/types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Input } from '@langgenius/dify-ui/input'
+import { NumberField, NumberFieldGroup, NumberFieldInput } from '@langgenius/dify-ui/number-field'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectItemIndicator,
+  SelectItemText,
+  SelectTrigger,
+  SelectValue,
+} from '@langgenius/dify-ui/select'
+import { Textarea } from '@langgenius/dify-ui/textarea'
+import { RiDeleteBinLine } from '@remixicon/react'
+import { produce } from 'immer'
+import * as React from 'react'
+import { useCallback, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
+import { FileUploaderInAttachmentWrapper } from '@/app/components/base/file-uploader'
 import TextGenerationImageUploader from '@/app/components/base/image-uploader/text-generation-image-uploader'
-import { Resolution } from '@/types/app'
-import { Trash03 } from '@/app/components/base/icons/src/vender/line/general'
-import { useFeatures } from '@/app/components/base/features/hooks'
+import { FILE_EXTS } from '@/app/components/base/prompt-editor/constants'
 import { VarBlockIcon } from '@/app/components/workflow/block-icon'
-import { Line3 } from '@/app/components/base/icons/src/public/common'
-import { Variable02 } from '@/app/components/base/icons/src/vender/solid/development'
+import { useHooksStore } from '@/app/components/workflow/hooks-store'
+import { Resolution, TransferMethod } from '@/types/app'
+import { BlockEnum, InputVarType, SupportUploadFileTypes } from '../../../../types'
+import { CodeLanguage } from '../../../code/types'
+import CodeEditor from '../editor/code-editor'
+import TextEditor from '../editor/text-editor'
+import BoolInput from './bool-input'
 
-type Props = {
+type Props = Readonly<{
   payload: InputVar
   value: any
   onChange: (value: any) => void
   className?: string
-}
+  autoFocus?: boolean
+  inStepRun?: boolean
+}>
 
 const FormItem: FC<Props> = ({
   payload,
   value,
   onChange,
   className,
+  autoFocus,
+  inStepRun = false,
 }) => {
-  const { t } = useTranslation()
-  const { type } = payload
-  const fileSettings = useFeatures(s => s.features.file)
-  const handleContextItemChange = useCallback((index: number) => {
-    return (newValue: any) => {
-      const newValues = produce(value, (draft: any) => {
-        draft[index] = newValue
-      })
-      onChange(newValues)
-    }
-  }, [value, onChange])
+  const collectionInputTypes: readonly InputVarType[] = [
+    InputVarType.contexts,
+    InputVarType.iterator,
+  ]
 
-  const handleContextItemRemove = useCallback((index: number) => {
-    return () => {
-      const newValues = produce(value, (draft: any) => {
-        draft.splice(index, 1)
-      })
-      onChange(newValues)
-    }
-  }, [value, onChange])
+  const { t } = useTranslation(['appDebug', 'common', 'workflow'])
+  const labelId = React.useId()
+  const { type } = payload
+  const fileSettings = useHooksStore((s) => s.fileSettings)
+  const jsonSchemaPlaceholder = React.useMemo(() => {
+    const schema = (payload as any)?.json_schema
+    if (!schema) return ''
+    return typeof schema === 'string' ? schema : JSON.stringify(schema, null, 2)
+  }, [payload])
+
+  const handleArrayItemChange = useCallback(
+    (index: number) => {
+      return (newValue: any) => {
+        const newValues = produce(value, (draft: any) => {
+          draft[index] = newValue
+        })
+        onChange(newValues)
+      }
+    },
+    [value, onChange],
+  )
+
+  const handleArrayItemRemove = useCallback(
+    (index: number) => {
+      return () => {
+        const newValues = produce(value, (draft: any) => {
+          draft.splice(index, 1)
+        })
+        onChange(newValues)
+      }
+    },
+    [value, onChange],
+  )
   const nodeKey = (() => {
     if (typeof payload.label === 'object') {
-      const { nodeType, nodeName, variable } = payload.label
+      const { nodeType, nodeName, variable, isChatVar } = payload.label
       return (
-        <div className='h-full flex items-center'>
-          <div className='flex items-center'>
-            <div className='p-[1px]'>
-              <VarBlockIcon type={nodeType || BlockEnum.Start} />
+        <div className="flex h-full items-center">
+          {!isChatVar && (
+            <div className="flex items-center">
+              <div className="p-px">
+                <VarBlockIcon type={nodeType || BlockEnum.Start} />
+              </div>
+              <div
+                className="mx-0.5 max-w-37.5 truncate text-xs font-medium text-text-secondary"
+                title={nodeName}
+              >
+                {nodeName}
+              </div>
+              <span aria-hidden className="mr-0.5 i-custom-public-common-line-3 h-3 w-1.25" />
             </div>
-            <div className='mx-0.5 text-xs font-medium text-gray-700 max-w-[150px] truncate' title={nodeName}>
-              {nodeName}
-            </div>
-            <Line3 className='mr-0.5'></Line3>
-          </div>
-
-          <div className='flex items-center text-primary-600'>
-            <Variable02 className='w-3.5 h-3.5' />
-            <div className='ml-0.5 text-xs font-medium max-w-[150px] truncate' title={variable} >
+          )}
+          <div className="flex items-center text-primary-600">
+            {!isChatVar && (
+              <span
+                aria-hidden
+                className="i-custom-vender-solid-development-variable-02 size-3.5"
+              />
+            )}
+            {isChatVar && (
+              <span
+                aria-hidden
+                className="i-custom-vender-line-others-bubble-x size-3.5 text-util-colors-teal-teal-700"
+              />
+            )}
+            <div
+              className={cn(
+                'ml-0.5 max-w-37.5 truncate text-xs font-medium',
+                isChatVar && 'text-text-secondary',
+              )}
+              title={variable}
+            >
               {variable}
             </div>
           </div>
@@ -75,108 +134,274 @@ const FormItem: FC<Props> = ({
     }
     return ''
   })()
+
+  const isBooleanType = type === InputVarType.checkbox
+  const isArrayLikeType = collectionInputTypes.includes(type)
+  const isContext = type === InputVarType.contexts
+  const isIterator = type === InputVarType.iterator
+  const isIteratorItemFile = isIterator && payload.isFileItem
+  const singleFileValue = useMemo(() => {
+    if (payload.variable === '#files#') return value || []
+
+    return value ? [value] : []
+  }, [payload.variable, value])
+  const handleSingleFileChange = useCallback(
+    (files: FileEntity[]) => {
+      if (payload.variable === '#files#') onChange(files)
+      else if (files.length) onChange(files[0])
+      else onChange(null)
+    },
+    [onChange, payload.variable],
+  )
+
   return (
-    <div className={`${className}`}>
-      {type !== InputVarType.contexts && <div className='h-8 leading-8 text-[13px] font-medium text-gray-700 truncate'>{typeof payload.label === 'object' ? nodeKey : payload.label}</div>}
-      <div className='grow'>
-        {
-          type === InputVarType.textInput && (
-            <input
-              className="w-full px-3 text-sm leading-8 text-gray-900 border-0 rounded-lg grow h-8 bg-gray-50 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-gray-200"
-              type="text"
-              value={value || ''}
-              onChange={e => onChange(e.target.value)}
-              placeholder={t('appDebug.variableConig.inputPlaceholder')!}
-            />
-          )
-        }
+    <div className={cn(className)}>
+      {!isArrayLikeType && !isBooleanType && (
+        <div className="mb-1 flex h-6 items-center gap-1 system-sm-semibold text-text-secondary">
+          <div id={labelId} className="truncate">
+            {typeof payload.label === 'object' ? nodeKey : payload.label}
+          </div>
+          {payload.hide === true ? (
+            <span className="system-xs-regular text-text-tertiary">
+              {t(($) => $['panel.optional_and_hidden'], { ns: 'workflow' })}
+            </span>
+          ) : (
+            !payload.required && (
+              <span className="system-xs-regular text-text-tertiary">
+                {t(($) => $['panel.optional'], { ns: 'workflow' })}
+              </span>
+            )
+          )}
+        </div>
+      )}
+      <div className="grow">
+        {type === InputVarType.textInput && (
+          <Input
+            name={payload.variable}
+            aria-labelledby={labelId}
+            value={value || ''}
+            onValueChange={(value) => onChange(value)}
+            placeholder={typeof payload.label === 'object' ? payload.label.variable : payload.label}
+            autoFocus={autoFocus}
+          />
+        )}
 
-        {
-          type === InputVarType.number && (
-            <input
-              className="w-full px-3 text-sm leading-8 text-gray-900 border-0 rounded-lg grow h-8 bg-gray-50 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-gray-200"
-              type="number"
-              value={value || ''}
-              onChange={e => onChange(e.target.value)}
-              placeholder={t('appDebug.variableConig.inputPlaceholder')!}
-            />
-          )
-        }
+        {type === InputVarType.number && (
+          <NumberField
+            step="any"
+            name={payload.variable}
+            value={value == null || value === '' ? null : Number(value)}
+            onValueChange={(value) => onChange(value)}
+          >
+            <NumberFieldGroup>
+              <NumberFieldInput
+                aria-labelledby={labelId}
+                placeholder={
+                  typeof payload.label === 'object' ? payload.label.variable : payload.label
+                }
+                autoFocus={autoFocus}
+              />
+            </NumberFieldGroup>
+          </NumberField>
+        )}
 
-        {
-          type === InputVarType.paragraph && (
-            <textarea
-              className="w-full px-3 py-1 text-sm leading-[18px] text-gray-900 border-0 rounded-lg grow h-[120px] bg-gray-50 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-gray-200"
-              value={value || ''}
-              onChange={e => onChange(e.target.value)}
-              placeholder={t('appDebug.variableConig.inputPlaceholder')!}
-            />
-          )
-        }
+        {type === InputVarType.paragraph && (
+          <Textarea
+            aria-labelledby={labelId}
+            value={value || ''}
+            onValueChange={(value) => onChange(value)}
+            placeholder={typeof payload.label === 'object' ? payload.label.variable : payload.label}
+            autoFocus={autoFocus}
+          />
+        )}
 
-        {
-          type === InputVarType.select && (
-            <Select
-              className="w-full"
-              defaultValue={value || ''}
-              items={payload.options?.map(option => ({ name: option, value: option })) || []}
-              onSelect={i => onChange(i.value)}
-              allowSearch={false}
-            />
-          )
-        }
-
-        {
-          type === InputVarType.json && (
-            <CodeEditor
-              value={value}
-              title={<span>JSON</span>}
-              language={CodeLanguage.json}
-              onChange={onChange}
-            />
-          )
-        }
-
-        {
-          type === InputVarType.files && (
-            <TextGenerationImageUploader
-              settings={{
-                ...fileSettings.image,
-                detail: Resolution.high,
-              }}
-              onFilesChange={files => onChange(files.filter(file => file.progress !== -1).map(fileItem => ({
-                type: 'image',
-                transfer_method: fileItem.type,
-                url: fileItem.url,
-                upload_file_id: fileItem.fileId,
-              })))}
-            />
-          )
-        }
-
-        {
-          type === InputVarType.contexts && (
-            <div className='space-y-2'>
-              {(value || []).map((item: any, index: number) => (
-                <CodeEditor
-                  key={index}
-                  value={item}
-                  title={<span>JSON</span>}
-                  headerRight={
-                    (value as any).length > 1
-                      ? (<Trash03
-                        onClick={handleContextItemRemove(index)}
-                        className='mr-1 w-3.5 h-3.5 text-gray-500 cursor-pointer'
-                      />)
-                      : undefined
-                  }
-                  language={CodeLanguage.json}
-                  onChange={handleContextItemChange(index)}
-                />
+        {type === InputVarType.select && (
+          <Select<string>
+            value={value || payload.default || null}
+            onValueChange={(nextValue) => {
+              if (!nextValue) return
+              onChange(nextValue)
+            }}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder={t(($) => $['placeholder.select'], { ns: 'common' })} />
+            </SelectTrigger>
+            <SelectContent>
+              {(payload.options || []).map((option) => (
+                <SelectItem key={option} value={option}>
+                  <SelectItemText>{option}</SelectItemText>
+                  <SelectItemIndicator />
+                </SelectItem>
               ))}
-            </div>
-          )
-        }
+            </SelectContent>
+          </Select>
+        )}
+
+        {isBooleanType && (
+          <BoolInput
+            name={payload.label as string}
+            value={!!value}
+            required={payload.required}
+            onChange={onChange}
+          />
+        )}
+
+        {type === InputVarType.json && (
+          <CodeEditor
+            value={value}
+            title={<span>JSON</span>}
+            language={CodeLanguage.json}
+            onChange={onChange}
+          />
+        )}
+        {type === InputVarType.jsonObject && (
+          <CodeEditor
+            value={value}
+            language={CodeLanguage.json}
+            onChange={onChange}
+            noWrapper
+            className="bg h-20 overflow-y-auto rounded-[10px] bg-components-input-bg-normal p-1"
+            placeholder={<div className="whitespace-pre">{jsonSchemaPlaceholder}</div>}
+          />
+        )}
+        {type === InputVarType.singleFile && (
+          <FileUploaderInAttachmentWrapper
+            value={singleFileValue}
+            onChange={handleSingleFileChange}
+            fileConfig={{
+              allowed_file_types:
+                inStepRun &&
+                (!payload.allowed_file_types || payload.allowed_file_types.length === 0)
+                  ? [
+                      SupportUploadFileTypes.image,
+                      SupportUploadFileTypes.document,
+                      SupportUploadFileTypes.audio,
+                      SupportUploadFileTypes.video,
+                    ]
+                  : payload.allowed_file_types,
+              allowed_file_extensions:
+                inStepRun &&
+                (!payload.allowed_file_extensions || payload.allowed_file_extensions.length === 0)
+                  ? [
+                      ...(FILE_EXTS[SupportUploadFileTypes.image] ?? []),
+                      ...(FILE_EXTS[SupportUploadFileTypes.document] ?? []),
+                      ...(FILE_EXTS[SupportUploadFileTypes.audio] ?? []),
+                      ...(FILE_EXTS[SupportUploadFileTypes.video] ?? []),
+                    ]
+                  : payload.allowed_file_extensions,
+              allowed_file_upload_methods: inStepRun
+                ? [TransferMethod.local_file, TransferMethod.remote_url]
+                : payload.allowed_file_upload_methods,
+              number_limits: 1,
+              fileUploadConfig: fileSettings?.fileUploadConfig,
+            }}
+          />
+        )}
+        {(type === InputVarType.multiFiles || isIteratorItemFile) && (
+          <FileUploaderInAttachmentWrapper
+            value={value}
+            onChange={(files) => onChange(files)}
+            fileConfig={{
+              allowed_file_types:
+                (inStepRun || isIteratorItemFile) &&
+                (!payload.allowed_file_types || payload.allowed_file_types.length === 0)
+                  ? [
+                      SupportUploadFileTypes.image,
+                      SupportUploadFileTypes.document,
+                      SupportUploadFileTypes.audio,
+                      SupportUploadFileTypes.video,
+                    ]
+                  : payload.allowed_file_types,
+              allowed_file_extensions:
+                (inStepRun || isIteratorItemFile) &&
+                (!payload.allowed_file_extensions || payload.allowed_file_extensions.length === 0)
+                  ? [
+                      ...(FILE_EXTS[SupportUploadFileTypes.image] ?? []),
+                      ...(FILE_EXTS[SupportUploadFileTypes.document] ?? []),
+                      ...(FILE_EXTS[SupportUploadFileTypes.audio] ?? []),
+                      ...(FILE_EXTS[SupportUploadFileTypes.video] ?? []),
+                    ]
+                  : payload.allowed_file_extensions,
+              allowed_file_upload_methods:
+                inStepRun || isIteratorItemFile
+                  ? [TransferMethod.local_file, TransferMethod.remote_url]
+                  : payload.allowed_file_upload_methods,
+              number_limits: inStepRun || isIteratorItemFile ? 5 : payload.max_length,
+              fileUploadConfig: fileSettings?.fileUploadConfig,
+            }}
+          />
+        )}
+        {type === InputVarType.files && (
+          <TextGenerationImageUploader
+            settings={
+              {
+                ...fileSettings,
+                detail: fileSettings?.image?.detail || Resolution.high,
+                transfer_methods: fileSettings?.allowed_file_upload_methods || [],
+              } as any
+            }
+            onFilesChange={(files) =>
+              onChange(
+                files
+                  .filter((file) => file.progress !== -1)
+                  .map((fileItem) => ({
+                    type: 'image',
+                    transfer_method: fileItem.type,
+                    url: fileItem.url,
+                    upload_file_id: fileItem.fileId,
+                  })),
+              )
+            }
+          />
+        )}
+
+        {isContext && (
+          <div className="space-y-2">
+            {(value || []).map((item: any, index: number) => (
+              <CodeEditor
+                key={index}
+                value={item}
+                title={<span>JSON</span>}
+                headerRight={
+                  (value as any).length > 1 ? (
+                    <RiDeleteBinLine
+                      onClick={handleArrayItemRemove(index)}
+                      className="mr-1 size-3.5 cursor-pointer text-text-tertiary"
+                    />
+                  ) : undefined
+                }
+                language={CodeLanguage.json}
+                onChange={handleArrayItemChange(index)}
+              />
+            ))}
+          </div>
+        )}
+
+        {isIterator && !isIteratorItemFile && (
+          <div className="space-y-2">
+            {(value || []).map((item: any, index: number) => (
+              <TextEditor
+                key={index}
+                isInNode
+                value={item}
+                title={
+                  <span>
+                    {t(($) => $['variableConfig.content'], { ns: 'appDebug' })} {index + 1}{' '}
+                  </span>
+                }
+                onChange={handleArrayItemChange(index)}
+                headerRight={
+                  (value as any).length > 1 ? (
+                    <RiDeleteBinLine
+                      onClick={handleArrayItemRemove(index)}
+                      className="mr-1 size-3.5 cursor-pointer text-text-tertiary"
+                    />
+                  ) : undefined
+                }
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

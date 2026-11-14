@@ -4,31 +4,40 @@ on:
   pull_request:
     branches:
       - main
+    paths:
+      - sdks/**
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - patches/**
+      - .github/actions/setup-web/**
+      - .github/workflows/tool-test-sdks.yaml
+
+concurrency:
+  group: sdk-tests-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: unit test for Node.js SDK
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        node-version: [16, 18, 20]
+    runs-on: depot-ubuntu-24.04
 
     defaults:
       run:
         working-directory: sdks/nodejs-client
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: ''
-          cache-dependency-path: 'yarn.lock'
+          persist-credentials: false
 
-      - name: Install Dependencies
-        run: yarn install
+      - name: Setup web environment
+        uses: ./.github/actions/setup-web
 
       - name: Test
-        run: yarn test
+        run: pnpm test
+
+      - name: Build and verify package entry points
+        run: |
+          pnpm build
+          node --input-type=module -e "import { access } from 'node:fs/promises'; import 'dify-client'; await access('dist/index.d.ts')"

@@ -1,131 +1,152 @@
 'use client'
-import type { FC } from 'react'
-import React, { useState } from 'react'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Field, FieldError, FieldLabel } from '@langgenius/dify-ui/field'
+import { Form } from '@langgenius/dify-ui/form'
+import { Textarea } from '@langgenius/dify-ui/textarea'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import Textarea from 'rc-textarea'
-import cn from 'classnames'
-import { Robot, User } from '@/app/components/base/icons/src/public/avatar'
-import { Edit04, Trash03 } from '@/app/components/base/icons/src/vender/line/general'
-import { Edit04 as EditSolid } from '@/app/components/base/icons/src/vender/solid/general'
-import Button from '@/app/components/base/button'
+import robotAvatar from '../../assets/robot-avatar.svg'
 
-export enum EditItemType {
-  Query = 'query',
-  Answer = 'answer',
-}
-type Props = {
+export const EditItemType = { Query: 'query', Answer: 'answer' } as const
+export type EditItemType = (typeof EditItemType)[keyof typeof EditItemType]
+
+type EditItemProps = {
   type: EditItemType
   content: string
+  savedContent: string
   readonly?: boolean
-  onSave: (content: string) => void
+  isPending: boolean
+  onSave: (content: string, onSuccess: () => void) => void
 }
 
-export const EditTitle: FC<{ className?: string; title: string }> = ({ className, title }) => (
-  <div className={cn(className, 'flex items-center height-[18px] text-xs font-medium text-gray-500')}>
-    <EditSolid className='mr-1 w-3.5 h-3.5' />
-    <div>{title}</div>
-    <div
-      className='ml-2 grow h-[1px]'
-      style={{
-        background: 'linear-gradient(90deg, rgba(0, 0, 0, 0.05) -1.65%, rgba(0, 0, 0, 0.00) 100%)',
-      }}
-    ></div>
-  </div>
-)
-const EditItem: FC<Props> = ({
+type EditTitleProps = { className?: string; title: string }
+
+export function EditTitle({ className, title }: EditTitleProps) {
+  return (
+    <div className={cn(className, 'flex h-4.5 items-center system-xs-medium text-text-tertiary')}>
+      <span aria-hidden className="me-1 i-ri-edit-fill size-3.5" />
+      <span>{title}</span>
+      <div className="ms-2 h-px grow bg-linear-to-r from-divider-subtle to-transparent" />
+    </div>
+  )
+}
+
+function focusEditor(element: HTMLTextAreaElement | null) {
+  element?.focus()
+}
+
+export default function EditItem({
   type,
   readonly,
   content,
+  savedContent,
+  isPending,
   onSave,
-}) => {
-  const { t } = useTranslation()
-  const [newContent, setNewContent] = useState('')
-  const showNewContent = newContent && newContent !== content
-  const avatar = type === EditItemType.Query ? <User className='w-6 h-6' /> : <Robot className='w-6 h-6' />
-  const name = type === EditItemType.Query ? t('appAnnotation.editModal.queryName') : t('appAnnotation.editModal.answerName')
-  const editTitle = type === EditItemType.Query ? t('appAnnotation.editModal.yourQuery') : t('appAnnotation.editModal.yourAnswer')
-  const placeholder = type === EditItemType.Query ? t('appAnnotation.editModal.queryPlaceholder') : t('appAnnotation.editModal.answerPlaceholder')
+}: EditItemProps) {
+  const { t } = useTranslation(['appAnnotation', 'common'])
   const [isEdit, setIsEdit] = useState(false)
-
-  const handleSave = () => {
-    onSave(newContent)
-    setIsEdit(false)
-  }
-
-  const handleCancel = () => {
-    setNewContent('')
+  const editButtonRef = useRef<HTMLButtonElement>(null)
+  const restoreEditFocus = useRef(false)
+  useLayoutEffect(() => {
+    if (restoreEditFocus.current && !isEdit && !isPending) {
+      editButtonRef.current?.focus()
+      restoreEditFocus.current = false
+    }
+  }, [isEdit, isPending])
+  const isQuestion = type === EditItemType.Query
+  const name = isQuestion
+    ? t(($) => $['editModal.queryName'], { ns: 'appAnnotation' })
+    : t(($) => $['editModal.answerName'], { ns: 'appAnnotation' })
+  const editTitle = isQuestion
+    ? t(($) => $['editModal.yourQuery'], { ns: 'appAnnotation' })
+    : t(($) => $['editModal.yourAnswer'], { ns: 'appAnnotation' })
+  const finishEditing = () => {
+    restoreEditFocus.current = true
     setIsEdit(false)
   }
 
   return (
-    <div className='flex' onClick={e => e.stopPropagation()}>
-      <div className='shrink-0 mr-3'>
-        {avatar}
+    <section aria-label={name} className="min-w-0 space-y-2">
+      <div className="flex items-center gap-2 system-sm-semibold text-text-primary">
+        {isQuestion ? (
+          <span aria-hidden className="i-custom-public-avatar-user size-6 shrink-0" />
+        ) : (
+          <img aria-hidden src={robotAvatar.src} alt="" width={24} height={24} />
+        )}
+        {name}
       </div>
-      <div className='grow'>
-        <div className='mb-1 leading-[18px] text-xs font-semibold text-gray-900'>{name}</div>
-        <div className='leading-5 text-sm font-normal text-gray-900'>{content}</div>
-        {!isEdit
-          ? (
-            <div>
-              {showNewContent && (
-                <div className='mt-3'>
-                  <EditTitle title={editTitle} />
-                  <div className='mt-1 leading-5 text-sm font-normal text-gray-900'>{newContent}</div>
-                </div>
-              )}
-              <div className='mt-2 flex items-center'>
-                {!readonly && (
-                  <div
-                    className='flex items-center space-x-1 leading-[18px] text-xs font-medium text-[#155EEF] cursor-pointer'
-                    onClick={(e) => {
-                      setIsEdit(true)
-                    }}
-                  >
-                    <Edit04 className='mr-1 w-3.5 h-3.5' />
-                    <div>{t('common.operation.edit')}</div>
-                  </div>
-                )}
-
-                {showNewContent && (
-                  <div className='ml-2 flex items-center leading-[18px] text-xs font-medium text-gray-500'>
-                    <div className='mr-2'>·</div>
-                    <div
-                      className='flex items-center space-x-1 cursor-pointer'
-                      onClick={() => {
-                        setNewContent(content)
-                        onSave(content)
-                      }}
-                    >
-                      <div className='w-3.5 h-3.5'>
-                        <Trash03 className='w-3.5 h-3.5' />
-                      </div>
-                      <div>{t('common.operation.delete')}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )
-          : (
-            <div className='mt-3'>
-              <EditTitle title={editTitle} />
-              <Textarea
-                className='mt-1 block w-full leading-5 max-h-none text-sm text-gray-700 outline-none appearance-none resize-none'
-                value={newContent}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setNewContent(e.target.value)}
-                autoSize={{ minRows: 3 }}
-                placeholder={placeholder}
-                autoFocus
-              />
-              <div className='mt-2 flex space-x-2'>
-                <Button className='!h-7 !text-xs !font-medium' type='primary' onClick={handleSave}>{t('common.operation.save')}</Button>
-                <Button className='!h-7 !text-xs !font-medium' onClick={handleCancel}>{t('common.operation.cancel')}</Button>
-              </div>
-            </div>
+      <p className="system-sm-regular wrap-break-word whitespace-pre-wrap text-text-primary">
+        {content}
+      </p>
+      {!isEdit && savedContent !== content && (
+        <div className="space-y-1">
+          <EditTitle title={editTitle} />
+          <p className="system-sm-regular wrap-break-word whitespace-pre-wrap text-text-primary">
+            {savedContent}
+          </p>
+        </div>
+      )}
+      {!readonly && (
+        <div className="flex gap-2">
+          <Button
+            ref={editButtonRef}
+            size="small"
+            variant="ghost"
+            disabled={isPending}
+            aria-expanded={isEdit}
+            onClick={() => setIsEdit(true)}
+          >
+            <span aria-hidden className="i-ri-edit-line size-3.5" />
+            {t(($) => $['operation.edit'], { ns: 'common' })}
+          </Button>
+          {!isEdit && savedContent !== content && (
+            <Button
+              size="small"
+              variant="ghost"
+              disabled={isPending}
+              onClick={() => onSave(content, finishEditing)}
+            >
+              {t(($) => $['operation.delete'], { ns: 'common' })}
+            </Button>
           )}
-      </div>
-    </div>
+        </div>
+      )}
+      {isEdit && (
+        <Form<{ content: string }>
+          onFormSubmit={({ content }) => {
+            if (!isPending) onSave(content, finishEditing)
+          }}
+        >
+          <Field name="content">
+            <FieldLabel>{editTitle}</FieldLabel>
+            <Textarea
+              ref={focusEditor}
+              defaultValue={savedContent}
+              required
+              readOnly={isPending}
+              placeholder={
+                isQuestion
+                  ? t(($) => $['editModal.queryPlaceholder'], { ns: 'appAnnotation' })
+                  : t(($) => $['editModal.answerPlaceholder'], { ns: 'appAnnotation' })
+              }
+            />
+            <FieldError match="valueMissing">
+              {isQuestion
+                ? t(($) => $['errorMessage.queryRequired'], { ns: 'appAnnotation' })
+                : t(($) => $['errorMessage.answerRequired'], { ns: 'appAnnotation' })}
+            </FieldError>
+          </Field>
+          <div className="mt-2 flex gap-2">
+            <Button type="submit" size="small" variant="primary" loading={isPending}>
+              {t(($) => $['operation.save'], { ns: 'common' })}
+            </Button>
+            <Button size="small" disabled={isPending} onClick={finishEditing}>
+              {t(($) => $['operation.cancel'], { ns: 'common' })}
+            </Button>
+          </div>
+        </Form>
+      )}
+    </section>
   )
 }
-export default React.memo(EditItem)

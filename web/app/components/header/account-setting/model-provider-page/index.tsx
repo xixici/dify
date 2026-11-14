@@ -1,150 +1,293 @@
+import type {
+  ModelProviderPluginSummaryResponse,
+  ModelProviderSummaryListResponse,
+  ModelProviderSummaryResponse,
+} from '@dify/contracts/api/console/workspaces/types.gen'
+import type { ReactNode } from 'react'
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
+import { useDebounce } from 'ahooks'
+import { noop } from 'es-toolkit/function'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { SearchInput } from '@/app/components/base/search-input'
+import { usePluginSettingsAccess } from '@/app/components/plugins/plugin-page/use-reference-setting'
+import { PluginCategoryEnum } from '@/app/components/plugins/types'
+import { useMarketplace } from '@/features/marketplace/client'
+import { systemFeaturesQueryOptions } from '@/features/system-features/client'
+import { consoleQuery } from '@/service/console'
+import { UpdateSettingDialog } from '../update-setting-dialog'
+import { ModelTypeEnum } from './declarations'
+import { useDefaultModel } from './hooks'
+import ModelProviderPageBody from './model-provider-page-body'
+import { useTrialCredits } from './provider-added-card/use-trial-credits'
 import SystemModelSelector from './system-model-selector'
-import ProviderAddedCard, { UPDATE_MODEL_PROVIDER_CUSTOM_MODEL_LIST } from './provider-added-card'
-import ProviderCard from './provider-card'
-import type {
-  CustomConfigrationModelFixedFields,
-  ModelProvider,
-} from './declarations'
-import {
-  ConfigurateMethodEnum,
-  CustomConfigurationStatusEnum,
-  ModelTypeEnum,
-} from './declarations'
-import {
-  useDefaultModel,
-  useUpdateModelList,
-  useUpdateModelProviders,
-} from './hooks'
-import { AlertTriangle } from '@/app/components/base/icons/src/vender/solid/alertsAndFeedback'
-import { useProviderContext } from '@/context/provider-context'
-import { useModalContext } from '@/context/modal-context'
-import { useEventEmitterContextContext } from '@/context/event-emitter'
 
-const ModelProviderPage = () => {
-  const { t } = useTranslation()
-  const { eventEmitter } = useEventEmitterContextContext()
-  const updateModelProviders = useUpdateModelProviders()
-  const updateModelList = useUpdateModelList()
-  const { data: textGenerationDefaultModel } = useDefaultModel(ModelTypeEnum.textGeneration)
-  const { data: embeddingsDefaultModel } = useDefaultModel(ModelTypeEnum.textEmbedding)
-  const { data: rerankDefaultModel } = useDefaultModel(ModelTypeEnum.rerank)
-  const { data: speech2textDefaultModel } = useDefaultModel(ModelTypeEnum.speech2text)
-  const { data: ttsDefaultModel } = useDefaultModel(ModelTypeEnum.tts)
-  const { modelProviders: providers } = useProviderContext()
-  const { setShowModelModal } = useModalContext()
-  const defaultModelNotConfigured = !textGenerationDefaultModel && !embeddingsDefaultModel && !speech2textDefaultModel && !rerankDefaultModel && !ttsDefaultModel
-  const [configedProviders, notConfigedProviders] = useMemo(() => {
-    const configedProviders: ModelProvider[] = []
-    const notConfigedProviders: ModelProvider[] = []
+const EMPTY_MODEL_PROVIDERS: ModelProviderSummaryListResponse['data'] = []
+const EMPTY_MODEL_PROVIDER_PLUGINS: ModelProviderSummaryListResponse['plugins'] = {}
+
+type SystemModelConfigStatus =
+  | 'no-provider'
+  | 'none-configured'
+  | 'partially-configured'
+  | 'fully-configured'
+
+type Props = Readonly<{
+  layout?: (parts: { body: ReactNode; toolbar: ReactNode }) => ReactNode
+  onOpenMarketplace?: () => void
+  onSearchTextChange?: (value: string) => void
+  searchText: string
+  stickyToolbar?: boolean
+  hideSystemModelSelectorProviderSettingsFooter?: boolean
+}>
+
+const FixedModelProvider = ['langgenius/openai/openai', 'langgenius/anthropic/anthropic']
+
+export type ModelProviderPluginSummary = ModelProviderPluginSummaryResponse & {
+  latestVersion?: string
+  latestUniqueIdentifier?: string
+}
+
+const ModelProviderPage = ({
+  layout,
+  onOpenMarketplace,
+  onSearchTextChange,
+  searchText,
+  stickyToolbar,
+  hideSystemModelSelectorProviderSettingsFooter,
+}: Props) => {
+  const debouncedSearchText = useDebounce(searchText, { wait: 500 })
+  const { t } = useTranslation(['modelProvider'])
+  const { canSetPluginPreferences } = usePluginSettingsAccess()
+  const defaultModelQueryOptions = { enabled: canSetPluginPreferences }
+  const { data: textGenerationDefaultModel, isLoading: isTextGenerationDefaultModelLoading } =
+    useDefaultModel(ModelTypeEnum.textGeneration, defaultModelQueryOptions)
+  const { data: embeddingsDefaultModel, isLoading: isEmbeddingsDefaultModelLoading } =
+    useDefaultModel(ModelTypeEnum.textEmbedding, defaultModelQueryOptions)
+  const { data: rerankDefaultModel, isLoading: isRerankDefaultModelLoading } = useDefaultModel(
+    ModelTypeEnum.rerank,
+    defaultModelQueryOptions,
+  )
+  const { data: speech2textDefaultModel, isLoading: isSpeech2textDefaultModelLoading } =
+    useDefaultModel(ModelTypeEnum.speech2text, defaultModelQueryOptions)
+  const { data: ttsDefaultModel, isLoading: isTTSDefaultModelLoading } = useDefaultModel(
+    ModelTypeEnum.tts,
+    defaultModelQueryOptions,
+  )
+  const { data: providerSummary, isLoading: isProviderSummaryLoading } = useQuery(
+    consoleQuery.workspaces.current.modelProviders.summary.get.queryOptions(),
+  )
+  const { data: deploymentEdition } = useSuspenseQuery({
+    ...systemFeaturesQueryOptions(),
+    select: ({ deployment_edition }) => deployment_edition,
+  })
+  const isCloud = deploymentEdition === 'CLOUD'
+  const { isPending: isTrialModelsPending } = useQuery(
+    consoleQuery.trialModels.get.queryOptions({ enabled: isCloud }),
+  )
+  const { isLoading: isTrialCreditsLoading } = useTrialCredits()
+  const isLoadingModelProviders =
+    isProviderSummaryLoading || (isCloud && (isTrialModelsPending || isTrialCreditsLoading))
+  const providers = providerSummary?.data ?? EMPTY_MODEL_PROVIDERS
+  const modelProviderPlugins = providerSummary?.plugins ?? EMPTY_MODEL_PROVIDER_PLUGINS
+
+  const marketplacePluginIds = useMemo(
+    () =>
+      Object.values(modelProviderPlugins)
+        .filter((plugin) => plugin.source === 'marketplace')
+        .map((plugin) => plugin.plugin_id),
+    [modelProviderPlugins],
+  )
+  const { data: latestVersionData } = useQuery(
+    consoleQuery.workspaces.current.plugin.list.latestVersions.post.queryOptions({
+      input: { body: { plugin_ids: marketplacePluginIds } },
+      enabled: !!marketplacePluginIds.length,
+    }),
+  )
+  const pluginSummaryMap = useMemo(() => {
+    const map = new Map<string, ModelProviderPluginSummary>()
+    for (const plugin of Object.values(modelProviderPlugins)) {
+      const latestVersion = latestVersionData?.versions[plugin.plugin_id]
+      map.set(plugin.plugin_id, {
+        ...plugin,
+        latestVersion: latestVersion?.version,
+        latestUniqueIdentifier: latestVersion?.unique_identifier,
+      })
+    }
+    return map
+  }, [latestVersionData, modelProviderPlugins])
+  const marketplace = useMarketplace()
+  const isDefaultModelLoading =
+    isTextGenerationDefaultModelLoading ||
+    isEmbeddingsDefaultModelLoading ||
+    isRerankDefaultModelLoading ||
+    isSpeech2textDefaultModelLoading ||
+    isTTSDefaultModelLoading
+  const [configuredProviders, notConfiguredProviders] = useMemo(() => {
+    const configuredProviders: ModelProviderSummaryResponse[] = []
+    const notConfiguredProviders: ModelProviderSummaryResponse[] = []
 
     providers.forEach((provider) => {
-      if (
-        provider.custom_configuration.status === CustomConfigurationStatusEnum.active
-        || (
-          provider.system_configuration.enabled === true
-          && provider.system_configuration.quota_configurations.find(item => item.quota_type === provider.system_configuration.current_quota_type)
-        )
-      )
-        configedProviders.push(provider)
-      else
-        notConfigedProviders.push(provider)
+      if (provider.is_configured) {
+        configuredProviders.push(provider)
+      } else {
+        notConfiguredProviders.push(provider)
+      }
     })
 
-    return [configedProviders, notConfigedProviders]
+    configuredProviders.sort((a, b) => {
+      if (FixedModelProvider.includes(a.provider) && FixedModelProvider.includes(b.provider))
+        return FixedModelProvider.indexOf(a.provider) - FixedModelProvider.indexOf(b.provider) > 0
+          ? 1
+          : -1
+      else if (FixedModelProvider.includes(a.provider)) return -1
+      else if (FixedModelProvider.includes(b.provider)) return 1
+      return 0
+    })
+
+    return [configuredProviders, notConfiguredProviders]
   }, [providers])
 
-  const handleOpenModal = (
-    provider: ModelProvider,
-    configurateMethod: ConfigurateMethodEnum,
-    customConfigrationModelFixedFields?: CustomConfigrationModelFixedFields,
-  ) => {
-    setShowModelModal({
-      payload: {
-        currentProvider: provider,
-        currentConfigurateMethod: configurateMethod,
-        currentCustomConfigrationModelFixedFields: customConfigrationModelFixedFields,
-      },
-      onSaveCallback: () => {
-        updateModelProviders()
+  const systemModelConfigStatus: SystemModelConfigStatus = useMemo(() => {
+    const defaultModels = [
+      textGenerationDefaultModel,
+      embeddingsDefaultModel,
+      rerankDefaultModel,
+      speech2textDefaultModel,
+      ttsDefaultModel,
+    ]
+    const configuredCount = defaultModels.filter(Boolean).length
+    if (configuredCount === 0 && configuredProviders.length === 0) return 'no-provider'
+    if (configuredCount === 0) return 'none-configured'
+    if (configuredCount < defaultModels.length) return 'partially-configured'
+    return 'fully-configured'
+  }, [
+    configuredProviders,
+    textGenerationDefaultModel,
+    embeddingsDefaultModel,
+    rerankDefaultModel,
+    speech2textDefaultModel,
+    ttsDefaultModel,
+  ])
+  const warningTextKey =
+    systemModelConfigStatus === 'no-provider' || systemModelConfigStatus === 'none-configured'
+      ? 'modelProvider.noneConfigured'
+      : null
+  const showWarning =
+    canSetPluginPreferences &&
+    !isLoadingModelProviders &&
+    !isDefaultModelLoading &&
+    !!warningTextKey
+  const systemModelSelector = (className: string) => {
+    if (!canSetPluginPreferences) return null
 
-        if (configurateMethod === ConfigurateMethodEnum.predefinedModel) {
-          provider.supported_model_types.forEach((type) => {
-            updateModelList(type)
-          })
-        }
-
-        if (configurateMethod === ConfigurateMethodEnum.customizableModel && provider.custom_configuration.status === CustomConfigurationStatusEnum.active) {
-          eventEmitter?.emit({
-            type: UPDATE_MODEL_PROVIDER_CUSTOM_MODEL_LIST,
-            payload: provider.provider,
-          } as any)
-
-          if (customConfigrationModelFixedFields?.__model_type)
-            updateModelList(customConfigrationModelFixedFields?.__model_type)
-        }
-      },
-    })
+    return (
+      <SystemModelSelector
+        className={className}
+        notConfigured={showWarning}
+        isLoading={isDefaultModelLoading}
+        hideProviderSettingsFooter={hideSystemModelSelectorProviderSettingsFooter}
+        onOpenMarketplace={onOpenMarketplace}
+      />
+    )
   }
 
-  return (
-    <div className='relative pt-1 -mt-2'>
-      <div className={`flex items-center justify-between mb-2 h-8 ${defaultModelNotConfigured && 'px-3 bg-[#FFFAEB] rounded-lg border border-[#FEF0C7]'}`}>
-        {
-          defaultModelNotConfigured
-            ? (
-              <div className='flex items-center text-xs font-medium text-gray-700'>
-                <AlertTriangle className='mr-1 w-3 h-3 text-[#F79009]' />
-                {t('common.modelProvider.notConfigured')}
-              </div>
-            )
-            : <div className='text-sm font-medium text-gray-800'>{t('common.modelProvider.models')}</div>
-        }
-        <SystemModelSelector
-          textGenerationDefaultModel={textGenerationDefaultModel}
-          embeddingsDefaultModel={embeddingsDefaultModel}
-          rerankDefaultModel={rerankDefaultModel}
-          speech2textDefaultModel={speech2textDefaultModel}
-          ttsDefaultModel={ttsDefaultModel}
-        />
-      </div>
-      {
-        !!configedProviders?.length && (
-          <div className='pb-3'>
-            {
-              configedProviders?.map(provider => (
-                <ProviderAddedCard
-                  key={provider.provider}
-                  provider={provider}
-                  onOpenModal={(configurateMethod: ConfigurateMethodEnum, currentCustomConfigrationModelFixedFields?: CustomConfigrationModelFixedFields) => handleOpenModal(provider, configurateMethod, currentCustomConfigrationModelFixedFields)}
+  const [filteredConfiguredProviders, filteredNotConfiguredProviders] = useMemo(() => {
+    const filteredConfiguredProviders = configuredProviders.filter(
+      (provider) =>
+        provider.provider.toLowerCase().includes(debouncedSearchText.toLowerCase()) ||
+        Object.values(provider.label).some((text) =>
+          text?.toLowerCase().includes(debouncedSearchText.toLowerCase()),
+        ),
+    )
+    const filteredNotConfiguredProviders = notConfiguredProviders.filter(
+      (provider) =>
+        provider.provider.toLowerCase().includes(debouncedSearchText.toLowerCase()) ||
+        Object.values(provider.label).some((text) =>
+          text?.toLowerCase().includes(debouncedSearchText.toLowerCase()),
+        ),
+    )
+
+    return [filteredConfiguredProviders, filteredNotConfiguredProviders]
+  }, [configuredProviders, debouncedSearchText, notConfiguredProviders])
+  const showEmptyProvider = !isLoadingModelProviders && !configuredProviders.length
+  const showConfiguredProviders = !isLoadingModelProviders && !!filteredConfiguredProviders?.length
+  const showNotConfiguredProviders =
+    !isLoadingModelProviders && !!filteredNotConfiguredProviders?.length
+  const toolbar = (
+    <div
+      className={
+        stickyToolbar
+          ? layout
+            ? 'flex w-full items-center justify-between gap-3'
+            : 'sticky top-0 z-10 -mx-6 mb-2 flex items-center justify-between gap-3 bg-components-panel-bg px-6 pb-2'
+          : 'mb-2 flex items-center justify-between gap-3'
+      }
+    >
+      <SearchInput
+        className="w-50 shrink-0"
+        placeholder={t(($) => $['modelProvider.searchModels'], { ns: 'modelProvider' })}
+        value={searchText}
+        onValueChange={onSearchTextChange ?? noop}
+      />
+      <div className="flex shrink-0 items-center justify-end gap-2">
+        <div
+          className={
+            showWarning
+              ? 'relative inline-flex shrink-0 items-center gap-2 overflow-hidden rounded-lg border-[0.5px] border-components-panel-border bg-components-panel-bg-blur py-1 ps-2.5 pe-1 shadow-xs backdrop-blur-[5px]'
+              : 'contents'
+          }
+        >
+          {showWarning && (
+            <>
+              <div className="pointer-events-none absolute -inset-px bg-[linear-gradient(119deg,rgba(247,144,9,0.25)_0%,rgba(255,255,255,0)_100%)] opacity-40" />
+              <div className="relative flex shrink-0 items-center gap-1">
+                <span
+                  aria-hidden
+                  className="i-ri-alert-fill size-4 shrink-0 text-text-warning-secondary"
                 />
-              ))
-            }
+                <span
+                  className="shrink-0 system-sm-medium whitespace-nowrap text-text-primary"
+                  title={t(($) => $[warningTextKey], { ns: 'modelProvider' })}
+                >
+                  {t(($) => $[warningTextKey], { ns: 'modelProvider' })}
+                </span>
+              </div>
+            </>
+          )}
+          <div className={showWarning ? 'relative shrink-0' : 'contents'}>
+            {systemModelSelector(
+              showWarning ? 'h-6 px-1.5 text-xs font-medium' : 'h-8 px-3 system-sm-medium',
+            )}
           </div>
-        )
-      }
-      {
-        !!notConfigedProviders?.length && (
-          <>
-            <div className='flex items-center mb-2 text-xs font-semibold text-gray-500'>
-              + {t('common.modelProvider.addMoreModelProvider')}
-              <span className='grow ml-3 h-[1px] bg-gradient-to-r from-[#f3f4f6]' />
-            </div>
-            <div className='grid grid-cols-3 gap-2'>
-              {
-                notConfigedProviders?.map(provider => (
-                  <ProviderCard
-                    key={provider.provider}
-                    provider={provider}
-                    onOpenModal={(configurateMethod: ConfigurateMethodEnum) => handleOpenModal(provider, configurateMethod)}
-                  />
-                ))
-              }
-            </div>
-          </>
-        )
-      }
+        </div>
+        {canSetPluginPreferences && <UpdateSettingDialog category={PluginCategoryEnum.model} />}
+      </div>
+    </div>
+  )
+
+  const body = (
+    <ModelProviderPageBody
+      providers={providers}
+      filteredConfiguredProviders={filteredConfiguredProviders}
+      filteredNotConfiguredProviders={filteredNotConfiguredProviders}
+      isLoadingModelProviders={isLoadingModelProviders}
+      showEmptyProvider={showEmptyProvider}
+      showConfiguredProviders={showConfiguredProviders}
+      showNotConfiguredProviders={showNotConfiguredProviders}
+      marketplace={marketplace}
+      searchText={searchText}
+      pluginSummaryMap={pluginSummaryMap}
+      onOpenMarketplace={onOpenMarketplace}
+    />
+  )
+
+  if (layout)
+    return <div className="relative flex min-h-0 flex-1 flex-col">{layout({ body, toolbar })}</div>
+
+  return (
+    <div className="relative">
+      {toolbar}
+      {body}
     </div>
   )
 }

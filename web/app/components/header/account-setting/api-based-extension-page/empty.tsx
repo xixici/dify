@@ -1,26 +1,36 @@
 import { useTranslation } from 'react-i18next'
-import { Webhooks } from '@/app/components/base/icons/src/vender/line/development'
-import { BookOpen01 } from '@/app/components/base/icons/src/vender/line/education'
+import { STEP_BY_STEP_TOUR_TARGETS } from '@/app/components/step-by-step-tour/target-registry'
+import { useDocLink } from '@/context/i18n'
 
-const Empty = () => {
-  const { t } = useTranslation()
+export function Empty() {
+  const { t } = useTranslation(['common'])
+  const docLink = useDocLink()
 
   return (
-    <div className='mb-2 p-6 rounded-2xl bg-gray-50'>
-      <div className='flex items-center justify-center mb-3 w-12 h-12 rounded-[10px] border border-[#EAECF5]'>
-        <Webhooks className='w-6 h-6 text-gray-500' />
+    <div
+      className="mb-2 flex flex-col items-start gap-3 rounded-xl bg-background-section p-6"
+      data-step-by-step-tour-target={STEP_BY_STEP_TOUR_TARGETS.integrationCustomEndpointEmpty}
+    >
+      <div className="flex size-10 items-center justify-center rounded-[10px] border-[0.5px] border-components-card-border bg-components-card-bg-alt shadow-lg backdrop-blur-xs">
+        <span
+          aria-hidden
+          className="i-custom-vender-workflow-api-aggregate size-5 text-text-tertiary"
+        />
       </div>
-      <div className='mb-2 text-sm text-gray-600'>{t('common.apiBasedExtension.title')}</div>
-      <a
-        className='flex items-center mb-2 h-[18px] text-xs text-primary-600'
-        href={t('common.apiBasedExtension.linkUrl') || '/'}
-        target='_blank' rel='noopener noreferrer'
-      >
-        <BookOpen01 className='mr-1 w-3 h-3' />
-        {t('common.apiBasedExtension.link')}
-      </a>
+      <div className="flex w-full flex-col gap-1">
+        <div className="system-xs-regular text-text-primary">
+          {t(($) => $['apiBasedExtension.title'], { ns: 'common' })}
+        </div>
+        <a
+          className="flex items-center gap-1 system-xs-regular text-text-accent"
+          href={docLink('/use-dify/workspace/api-extension/api-extension')}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t(($) => $['apiBasedExtension.link'], { ns: 'common' })}
+          <span aria-hidden className="i-ri-external-link-line size-3" />
+        </a>
+      </div>
     </div>
   )
 }
-
-export default Empty

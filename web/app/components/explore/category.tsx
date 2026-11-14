@@ -1,60 +1,73 @@
 'use client'
-import type { FC } from 'react'
-import React from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { RadioGroup, RadioItem } from '@langgenius/dify-ui/radio-group'
 import { useTranslation } from 'react-i18next'
-import cn from 'classnames'
-import exploreI18n from '@/i18n/en-US/explore'
-import type { AppCategory } from '@/models/explore'
-import { ThumbsUp } from '@/app/components/base/icons/src/vender/line/alertsAndFeedback'
+import exploreI18n from '@/i18n/locales/en-US/explore.json'
 
-const categoryI18n = exploreI18n.category
-
-export type ICategoryProps = {
+type ICategoryProps = {
   className?: string
-  list: AppCategory[]
+  list: string[]
   value: string
-  onChange: (value: AppCategory | string) => void
+  onChange: (value: string) => void
   /**
-   * default value for searchparam 'category' in en
+   * default value for search param 'category' in en
    */
   allCategoriesEn: string
 }
 
-const Category: FC<ICategoryProps> = ({
-  className,
-  list,
-  value,
-  onChange,
-  allCategoriesEn,
-}) => {
-  const { t } = useTranslation()
-  const isAllCategories = !list.includes(value)
+function Category({ className, list, value, onChange, allCategoriesEn }: ICategoryProps) {
+  const { t } = useTranslation(['explore'])
+  const isAllCategories = !list.includes(value) || value === allCategoriesEn
+  const selectedCategory = isAllCategories ? allCategoriesEn : value
 
-  const itemClassName = (isSelected: boolean) => cn(
-    'flex items-center px-3 py-[7px] h-[32px] rounded-lg border-[0.5px] border-transparent text-gray-700 font-medium leading-[18px] cursor-pointer hover:bg-gray-200',
-    isSelected && 'bg-white border-gray-200 shadow-xs text-primary-600 hover:bg-white',
-  )
+  const renderCategoryName = (name: string) => {
+    const categoryKey = `category.${name}` as Extract<
+      keyof typeof exploreI18n,
+      `category.${string}`
+    >
+    return categoryKey in exploreI18n ? t(($) => $[categoryKey], { ns: 'explore' }) : name
+  }
+
+  const handleValueChange = (nextCategory: string) => {
+    if (nextCategory) onChange(nextCategory)
+  }
 
   return (
-    <div className={cn(className, 'flex space-x-1 text-[13px] flex-wrap')}>
-      <div
-        className={itemClassName(isAllCategories)}
-        onClick={() => onChange(allCategoriesEn)}
-      >
-        <ThumbsUp className='mr-1 w-3.5 h-3.5'/>
-        {t('explore.apps.allCategories')}
-      </div>
-      {list.map(name => (
-        <div
-          key={name}
-          className={itemClassName(name === value)}
-          onClick={() => onChange(name)}
+    <RadioGroup
+      aria-label={t(($) => $['tryApp.category'], { ns: 'explore' })}
+      className={cn(
+        className,
+        'flex max-w-full flex-wrap items-start gap-1 overflow-visible rounded-none bg-transparent p-0 text-[13px]',
+      )}
+      value={selectedCategory}
+      onValueChange={handleValueChange}
+    >
+      {[
+        {
+          name: allCategoriesEn,
+          label: t(($) => $['apps.allCategories'], { ns: 'explore' }),
+          isAll: true,
+        },
+        ...list
+          .filter((name) => name !== allCategoriesEn)
+          .map((name) => ({
+            name,
+            label: renderCategoryName(name),
+            isAll: false,
+          })),
+      ].map((item) => (
+        <RadioItem
+          key={item.isAll ? 'all' : item.name}
+          value={item.name}
+          nativeButton
+          render={<button type="button" />}
+          className="h-8 min-w-12 shrink-0 cursor-pointer touch-manipulation rounded-lg border-0 px-2.5 py-2 text-center system-sm-medium text-text-tertiary shadow-none hover:bg-state-base-hover focus-visible:ring-2 focus-visible:ring-state-accent-solid focus-visible:outline-hidden data-checked:border-0 data-checked:bg-state-base-active data-checked:system-sm-semibold data-checked:text-text-secondary data-checked:shadow-none"
         >
-          {categoryI18n[name] ? t(`explore.category.${name}`) : name}
-        </div>
+          {item.label}
+        </RadioItem>
       ))}
-    </div>
+    </RadioGroup>
   )
 }
 
-export default React.memo(Category)
+export default Category

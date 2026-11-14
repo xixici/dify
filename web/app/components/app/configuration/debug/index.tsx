@@ -1,47 +1,62 @@
 'use client'
+
+import type { AppModelConfigPayload } from '@dify/contracts/api/console/apps/types.gen'
 import type { FC } from 'react'
-import useSWR from 'swr'
-import { useTranslation } from 'react-i18next'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { setAutoFreeze } from 'immer'
-import { useBoolean } from 'ahooks'
-import { useContext } from 'use-context-selector'
-import { useShallow } from 'zustand/react/shallow'
-import HasNotSetAPIKEY from '../base/warning-mask/has-not-set-api'
-import FormattingChanged from '../base/warning-mask/formatting-changed'
-import GroupName from '../base/group-name'
-import CannotQueryDataset from '../base/warning-mask/cannot-query-dataset'
-import DebugWithMultipleModel from './debug-with-multiple-model'
-import DebugWithSingleModel from './debug-with-single-model'
 import type { DebugWithSingleModelRefType } from './debug-with-single-model'
 import type { ModelAndParameter } from './types'
-import {
-  APP_CHAT_WITH_MULTIPLE_MODEL,
-  APP_CHAT_WITH_MULTIPLE_MODEL_RESTART,
-} from './types'
-import { AppType, ModelModeType, TransferMethod } from '@/types/app'
-import PromptValuePanel from '@/app/components/app/configuration/prompt-value-panel'
-import ConfigContext from '@/context/debug-configuration'
-import { ToastContext } from '@/app/components/base/toast'
-import { sendCompletionMessage } from '@/service/debug'
-import Button from '@/app/components/base/button'
-import type { ModelConfig as BackendModelConfig, VisionFile } from '@/types/app'
-import { promptVariablesToUserInputsForm } from '@/utils/model-config'
-import TextGeneration from '@/app/components/app/text-generate/item'
-import { IS_CE_EDITION } from '@/config'
-import type { Inputs } from '@/models/debug'
-import { fetchFileUploadConfig } from '@/service/common'
-import { useDefaultModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
-import { ModelFeatureEnum, ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import type { IChatItem } from '@/app/components/base/chat/chat/type'
 import type { ModelParameterModalProps } from '@/app/components/header/account-setting/model-provider-page/model-parameter-modal'
-import { Plus } from '@/app/components/base/icons/src/vender/line/general'
-import { useEventEmitterContextContext } from '@/context/event-emitter'
-import { useProviderContext } from '@/context/provider-context'
+import type { Inputs } from '@/models/debug'
+import type { VisionFile, VisionSettings } from '@/types/app'
+import {
+  zAppChatPromptPayload,
+  zAppDatasetConfigPayload,
+  zAppFileUploadPayload,
+  zAppUserInputFormPayload,
+} from '@dify/contracts/api/console/apps/zod.gen'
+import { Button } from '@langgenius/dify-ui/button'
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@langgenius/dify-ui/collapsible'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
+import { useQuery } from '@tanstack/react-query'
+import { useBoolean } from 'ahooks'
+import { noop } from 'es-toolkit/function'
+import { cloneDeep } from 'es-toolkit/object'
+import { produce, setAutoFreeze } from 'immer'
+import * as React from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useContext } from 'use-context-selector'
+import ChatUserInput from '@/app/components/app/configuration/debug/chat-user-input'
+import PromptValuePanel from '@/app/components/app/configuration/prompt-value-panel'
+import { toast } from '@/app/components/app/configuration/toast'
+import TextGeneration from '@/app/components/app/text-generate/item'
+import AgentLogModal from '@/app/components/base/agent-log-modal'
+import { useFeatures, useFeaturesStore } from '@/app/components/base/features/hooks'
 import PromptLogModal from '@/app/components/base/prompt-log-modal'
-import { useStore as useAppStore } from '@/app/components/app/store'
+import {
+  ModelFeatureEnum,
+  ModelTypeEnum,
+} from '@/app/components/header/account-setting/model-provider-page/declarations'
+import { useDefaultModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import { DEFAULT_CHAT_PROMPT_CONFIG, DEFAULT_COMPLETION_PROMPT_CONFIG } from '@/config'
+import ConfigContext from '@/context/debug-configuration'
+import { useEventEmitterContextContext } from '@/context/event-emitter'
+import { consoleQuery } from '@/service/console'
+import { sendCompletionMessage } from '@/service/debug'
+import { AppSourceType } from '@/service/share'
+import { ModelModeType, TransferMethod } from '@/types/app'
+import { formatBooleanInputs, promptVariablesToUserInputsForm } from '@/utils/model-config'
+import GroupName from '../base/group-name'
+import CannotQueryDataset from '../base/warning-mask/cannot-query-dataset'
+import FormattingChanged from '../base/warning-mask/formatting-changed'
+import HasNotSetAPIKEY from '../base/warning-mask/has-not-set-api'
+import DebugWithMultipleModel from './debug-with-multiple-model'
+import DebugWithSingleModel from './debug-with-single-model'
+import { APP_CHAT_WITH_MULTIPLE_MODEL, APP_CHAT_WITH_MULTIPLE_MODEL_RESTART } from './types'
 
 type IDebug = {
-  hasSetAPIKEY: boolean
+  isPreview?: boolean
   onSetting: () => void
   inputs: Inputs
   modelParameterParams: Pick<ModelParameterModalProps, 'setModel' | 'onCompletionParamsChange'>
@@ -51,7 +66,7 @@ type IDebug = {
 }
 
 const Debug: FC<IDebug> = ({
-  hasSetAPIKEY = true,
+  isPreview = false,
   onSetting,
   inputs,
   modelParameterParams,
@@ -59,8 +74,9 @@ const Debug: FC<IDebug> = ({
   multipleModelConfigs,
   onMultipleModelConfigsChange,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['appDebug', 'common', 'workflow', 'modelProvider'])
   const {
+    canTestAndRun = false,
     appId,
     mode,
     modelModeType,
@@ -74,8 +90,6 @@ const Debug: FC<IDebug> = ({
     speechToTextConfig,
     textToSpeechConfig,
     citationConfig,
-    moderationConfig,
-    moreLikeThisConfig,
     formattingChanged,
     setFormattingChanged,
     dataSets,
@@ -83,12 +97,10 @@ const Debug: FC<IDebug> = ({
     completionParams,
     hasSetContextVar,
     datasetConfigs,
-    visionConfig,
-    setVisionConfig,
+    externalDataToolsConfig,
   } = useContext(ConfigContext)
   const { eventEmitter } = useEventEmitterContextContext()
   const { data: text2speechDefaultModel } = useDefaultModel(ModelTypeEnum.textEmbedding)
-  const { data: fileUploadConfigResponse } = useSWR({ url: '/files/upload' }, fetchFileUploadConfig)
   useEffect(() => {
     setAutoFreeze(false)
     return () => {
@@ -96,16 +108,16 @@ const Debug: FC<IDebug> = ({
     }
   }, [])
 
-  const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] = useBoolean(false)
+  const [isResponding, { setTrue: setRespondingTrue, setFalse: setRespondingFalse }] =
+    useBoolean(false)
   const [isShowFormattingChangeConfirm, setIsShowFormattingChangeConfirm] = useState(false)
   const [isShowCannotQueryDataset, setShowCannotQueryDataset] = useState(false)
 
   useEffect(() => {
-    if (formattingChanged)
-      setIsShowFormattingChangeConfirm(true)
+    if (formattingChanged) setIsShowFormattingChangeConfirm(true)
   }, [formattingChanged])
 
-  const debugWithSingleModelRef = React.useRef<DebugWithSingleModelRefType | null>(null)
+  const debugWithSingleModelRef = React.useRef<DebugWithSingleModelRefType>(null!)
   const handleClearConversation = () => {
     debugWithSingleModelRef.current?.handleRestart()
   }
@@ -130,49 +142,59 @@ const Debug: FC<IDebug> = ({
     setIsShowFormattingChangeConfirm(false)
     setFormattingChanged(false)
   }
-
-  const { notify } = useContext(ToastContext)
   const logError = useCallback((message: string) => {
-    notify({ type: 'error', message, duration: 3000 })
-  }, [notify])
+    toast.error(message)
+  }, [])
   const [completionFiles, setCompletionFiles] = useState<VisionFile[]>([])
 
   const checkCanSend = useCallback(() => {
-    if (isAdvancedMode && mode !== AppType.completion) {
+    if (isAdvancedMode && mode !== 'completion') {
       if (modelModeType === ModelModeType.completion) {
         if (!hasSetBlockStatus.history) {
-          notify({ type: 'error', message: t('appDebug.otherError.historyNoBeEmpty'), duration: 3000 })
+          toast.error(t(($) => $['otherError.historyNoBeEmpty'], { ns: 'appDebug' }))
           return false
         }
         if (!hasSetBlockStatus.query) {
-          notify({ type: 'error', message: t('appDebug.otherError.queryNoBeEmpty'), duration: 3000 })
+          toast.error(t(($) => $['otherError.queryNoBeEmpty'], { ns: 'appDebug' }))
           return false
         }
       }
     }
     let hasEmptyInput = ''
-    const requiredVars = modelConfig.configs.prompt_variables.filter(({ key, name, required, type }) => {
-      if (type !== 'string' && type !== 'paragraph' && type !== 'select')
-        return false
-      const res = (!key || !key.trim()) || (!name || !name.trim()) || (required || required === undefined || required === null)
-      return res
-    }) // compatible with old version
-    // debugger
-    requiredVars.forEach(({ key, name }) => {
-      if (hasEmptyInput)
-        return
+    const requiredVars = modelConfig.configs.prompt_variables.filter(
+      ({ key, name, required, type }) => {
+        if (type !== 'string' && type !== 'paragraph' && type !== 'select' && type !== 'number')
+          return false
+        const res =
+          !key ||
+          !key.trim() ||
+          !name ||
+          !name.trim() ||
+          required ||
+          required === undefined ||
+          required === null
+        return res
+      },
+    ) // compatible with old version
+    requiredVars.forEach(({ key, name, type }) => {
+      if (hasEmptyInput) return
 
-      if (!inputs[key])
-        hasEmptyInput = name
+      if (!inputs[key] && !(type === 'number' && inputs[key] === 0)) hasEmptyInput = name
     })
 
     if (hasEmptyInput) {
-      logError(t('appDebug.errorMessage.valueOfVarRequired', { key: hasEmptyInput }))
+      logError(
+        t(($) => $['errorMessage.valueOfVarRequired'], { ns: 'appDebug', key: hasEmptyInput }),
+      )
       return false
     }
 
-    if (completionFiles.find(item => item.transfer_method === TransferMethod.local_file && !item.upload_file_id)) {
-      notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
+    if (
+      completionFiles.find(
+        (item) => item.transfer_method === TransferMethod.local_file && !item.upload_file_id,
+      )
+    ) {
+      toast.info(t(($) => $['errorMessage.waitForFileUpload'], { ns: 'appDebug' }))
       return false
     }
     return !hasEmptyInput
@@ -186,16 +208,17 @@ const Debug: FC<IDebug> = ({
     modelConfig.configs.prompt_variables,
     t,
     logError,
-    notify,
     modelModeType,
   ])
 
   const [completionRes, setCompletionRes] = useState('')
   const [messageId, setMessageId] = useState<string | null>(null)
+  const features = useFeatures((s) => s.features)
+  const featuresStore = useFeaturesStore()
 
   const sendTextCompletion = async () => {
     if (isResponding) {
-      notify({ type: 'info', message: t('appDebug.errorMessage.waitForResponse') })
+      toast.info(t(($) => $['errorMessage.waitForResponse'], { ns: 'appDebug' }))
       return false
     }
 
@@ -204,8 +227,7 @@ const Debug: FC<IDebug> = ({
       return true
     }
 
-    if (!checkCanSend())
-      return
+    if (!checkCanSend()) return
 
     const postDatasets = dataSets.map(({ id }) => ({
       dataset: {
@@ -213,58 +235,63 @@ const Debug: FC<IDebug> = ({
         id,
       },
     }))
-    const contextVar = modelConfig.configs.prompt_variables.find(item => item.is_context_var)?.key
+    const contextVar = modelConfig.configs.prompt_variables.find((item) => item.is_context_var)?.key
 
-    const postModelConfig: BackendModelConfig = {
-      pre_prompt: !isAdvancedMode ? modelConfig.configs.prompt_template : '',
-      prompt_type: promptMode,
-      chat_prompt_config: {},
-      completion_prompt_config: {},
-      user_input_form: promptVariablesToUserInputsForm(modelConfig.configs.prompt_variables),
-      dataset_query_variable: contextVar || '',
-      opening_statement: introduction,
-      suggested_questions_after_answer: suggestedQuestionsAfterAnswerConfig,
-      speech_to_text: speechToTextConfig,
-      retriever_resource: citationConfig,
-      sensitive_word_avoidance: moderationConfig,
-      more_like_this: moreLikeThisConfig,
-      model: {
-        provider: modelConfig.provider,
-        name: modelConfig.model_id,
-        mode: modelConfig.mode,
-        completion_params: completionParams as any,
-      },
-      text_to_speech: {
-        enabled: false,
-        voice: '',
-        language: '',
-      },
-      agent_mode: {
-        enabled: false,
-        tools: [],
-      },
-      dataset_configs: {
-        ...datasetConfigs,
-        datasets: {
-          datasets: [...postDatasets],
-        } as any,
-      },
-      file_upload: {
-        image: visionConfig,
-      },
-    }
-
-    if (isAdvancedMode) {
-      postModelConfig.chat_prompt_config = chatPromptConfig
-      postModelConfig.completion_prompt_config = completionPromptConfig
+    let postModelConfig: AppModelConfigPayload
+    try {
+      const chatPrompt = zAppChatPromptPayload.parse(
+        isAdvancedMode ? chatPromptConfig : cloneDeep(DEFAULT_CHAT_PROMPT_CONFIG),
+      )
+      const fileUpload = { ...features.file }
+      delete fileUpload.fileUploadConfig
+      postModelConfig = {
+        pre_prompt: !isAdvancedMode ? modelConfig.configs.prompt_template : '',
+        prompt_type: promptMode,
+        chat_prompt_config: chatPrompt,
+        completion_prompt_config: isAdvancedMode
+          ? completionPromptConfig
+          : cloneDeep(DEFAULT_COMPLETION_PROMPT_CONFIG),
+        user_input_form: zAppUserInputFormPayload
+          .array()
+          .parse(promptVariablesToUserInputsForm(modelConfig.configs.prompt_variables)),
+        dataset_query_variable: contextVar || '',
+        dataset_configs: zAppDatasetConfigPayload.parse({
+          ...datasetConfigs,
+          datasets: {
+            datasets: postDatasets,
+          },
+        }),
+        agent_mode: {
+          enabled: false,
+          tools: [],
+        },
+        model: {
+          provider: modelConfig.provider,
+          name: modelConfig.model_id,
+          mode: modelConfig.mode,
+          completion_params: completionParams,
+        },
+        more_like_this: features.moreLikeThis,
+        sensitive_word_avoidance: features.moderation,
+        text_to_speech: features.text2speech,
+        file_upload: zAppFileUploadPayload.parse(fileUpload),
+        opening_statement: introduction,
+        suggested_questions_after_answer: suggestedQuestionsAfterAnswerConfig,
+        speech_to_text: speechToTextConfig,
+        retriever_resource: citationConfig,
+        external_data_tools: externalDataToolsConfig,
+      }
+    } catch {
+      toast.error(t(($) => $['api.actionFailed'], { ns: 'common' }))
+      return false
     }
 
     const data: Record<string, any> = {
-      inputs,
+      inputs: formatBooleanInputs(modelConfig.configs.prompt_variables, inputs),
       model_config: postModelConfig,
     }
 
-    if (visionConfig.enabled && completionFiles && completionFiles?.length > 0) {
+    if (features.file?.enabled && completionFiles && completionFiles?.length > 0) {
       data.files = completionFiles.map((item) => {
         if (item.transfer_method === TransferMethod.local_file) {
           return {
@@ -297,10 +324,13 @@ const Debug: FC<IDebug> = ({
       onError() {
         setRespondingFalse()
       },
+      onNotifyError: (message) => toast.error(message),
     })
   }
 
   const handleSendTextCompletion = () => {
+    if (!canTestAndRun) return
+
     if (debugWithMultipleModel) {
       eventEmitter?.emit({
         type: APP_CHAT_WITH_MULTIPLE_MODEL,
@@ -315,195 +345,311 @@ const Debug: FC<IDebug> = ({
     sendTextCompletion()
   }
 
-  const varList = modelConfig.configs.prompt_variables.map((item: any) => {
+  const varList = modelConfig.configs.prompt_variables.map((item) => {
     return {
       label: item.key,
       value: inputs[item.key],
     }
   })
 
-  const { textGenerationModelList } = useProviderContext()
+  const { data: textGenerationModelList } = useQuery(
+    consoleQuery.workspaces.current.models.modelTypes.byModelType.get.queryOptions({
+      input: { params: { model_type: ModelTypeEnum.textGeneration } },
+      select: (response) => response.data,
+    }),
+  )
+  const hasActiveProvider =
+    isPreview || !!textGenerationModelList?.some((provider) => provider.status === 'active')
   const handleChangeToSingleModel = (item: ModelAndParameter) => {
-    const currentProvider = textGenerationModelList.find(modelItem => modelItem.provider === item.provider)
-    const currentModel = currentProvider?.models.find(model => model.model === item.model)
+    const currentProvider = textGenerationModelList?.find(
+      (modelItem) => modelItem.provider === item.provider,
+    )
+    const currentModel = currentProvider?.models.find((model) => model.model === item.model)
 
     modelParameterParams.setModel({
       modelId: item.model,
       provider: item.provider,
-      mode: currentModel?.model_properties.mode as string,
-      features: currentModel?.features,
+      mode:
+        typeof currentModel?.model_properties.mode === 'string'
+          ? currentModel.model_properties.mode
+          : undefined,
+      features: currentModel?.features ?? undefined,
     })
     modelParameterParams.onCompletionParamsChange(item.parameters)
-    onMultipleModelConfigsChange(
-      false,
-      [],
-    )
+    onMultipleModelConfigsChange(false, [])
   }
 
-  const handleVisionConfigInMultipleModel = () => {
+  const handleVisionConfigInMultipleModel = useCallback(() => {
     if (debugWithMultipleModel && mode) {
       const supportedVision = multipleModelConfigs.some((modelConfig) => {
-        const currentProvider = textGenerationModelList.find(modelItem => modelItem.provider === modelConfig.provider)
-        const currentModel = currentProvider?.models.find(model => model.model === modelConfig.model)
+        const currentProvider = textGenerationModelList?.find(
+          (modelItem) => modelItem.provider === modelConfig.provider,
+        )
+        const currentModel = currentProvider?.models.find(
+          (model) => model.model === modelConfig.model,
+        )
 
         return currentModel?.features?.includes(ModelFeatureEnum.vision)
       })
+      const { features, setFeatures } = featuresStore!.getState()
 
-      if (supportedVision) {
-        setVisionConfig({
-          ...visionConfig,
-          enabled: true,
-        }, true)
-      }
-      else {
-        setVisionConfig({
-          ...visionConfig,
-          enabled: false,
-        }, true)
-      }
+      const newFeatures = produce(features, (draft) => {
+        draft.file = {
+          ...draft.file,
+          enabled: supportedVision,
+        }
+      })
+      setFeatures(newFeatures)
     }
-  }
+  }, [debugWithMultipleModel, featuresStore, mode, multipleModelConfigs, textGenerationModelList])
 
   useEffect(() => {
     handleVisionConfigInMultipleModel()
-  }, [multipleModelConfigs, mode])
+  }, [multipleModelConfigs, mode, handleVisionConfigInMultipleModel])
 
-  const { currentLogItem, setCurrentLogItem, showPromptLogModal, setShowPromptLogModal } = useAppStore(useShallow(state => ({
-    currentLogItem: state.currentLogItem,
-    setCurrentLogItem: state.setCurrentLogItem,
-    showPromptLogModal: state.showPromptLogModal,
-    setShowPromptLogModal: state.setShowPromptLogModal,
-  })))
-  const [width, setWidth] = useState(0)
+  const [selectedLogItem, setSelectedLogItem] = useState<IChatItem>()
+  const [logModalWidth, setLogModalWidth] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
+  const singleChatContainerRef = useRef<HTMLDivElement>(null)
 
-  const adjustModalWidth = () => {
-    if (ref.current)
-      setWidth(document.body.clientWidth - (ref.current?.clientWidth + 16) - 8)
+  const handleOpenLog = (item: IChatItem) => {
+    const container =
+      debugWithMultipleModel || mode === 'completion' ? ref.current : singleChatContainerRef.current
+    if (container) setLogModalWidth(document.body.clientWidth - (container.clientWidth + 16) - 8)
+    setSelectedLogItem(item)
   }
 
   useEffect(() => {
-    adjustModalWidth()
-  }, [])
+    if (!selectedLogItem) return
+    const container =
+      debugWithMultipleModel || mode === 'completion' ? ref.current : singleChatContainerRef.current
+    if (!container) return
+
+    const adjustModalWidth = () => {
+      setLogModalWidth(document.body.clientWidth - (container.clientWidth + 16) - 8)
+    }
+    const observer = new ResizeObserver(adjustModalWidth)
+    observer.observe(container)
+    window.addEventListener('resize', adjustModalWidth)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', adjustModalWidth)
+    }
+  }, [debugWithMultipleModel, mode, selectedLogItem])
+
+  const [expanded, setExpanded] = useState(true)
 
   return (
     <>
-      <div className="shrink-0 pt-4 px-6">
-        <div className='flex items-center justify-between mb-2'>
-          <div className='h2 '>{t('appDebug.inputs.title')}</div>
-          <div className='flex items-center'>
-            {
-              debugWithMultipleModel
-                ? (
-                  <>
-                    <Button
-                      className={`
-                        h-8 px-2.5 text-[13px] font-medium text-primary-600 bg-white
-                        ${multipleModelConfigs.length >= 4 && 'opacity-30'}
-                      `}
-                      onClick={() => onMultipleModelConfigsChange(true, [...multipleModelConfigs, { id: `${Date.now()}`, model: '', provider: '', parameters: {} }])}
-                      disabled={multipleModelConfigs.length >= 4}
-                    >
-                      <Plus className='mr-1 w-3.5 h-3.5' />
-                      {t('common.modelProvider.addModel')}({multipleModelConfigs.length}/4)
-                    </Button>
-                    <div className='mx-2 w-[1px] h-[14px] bg-gray-200' />
-                  </>
-                )
-                : null
-            }
-            {mode !== AppType.completion && (
-              <Button className='flex items-center gap-1 !h-8 !bg-white' onClick={clearConversation}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M2.66663 2.66629V5.99963H3.05463M3.05463 5.99963C3.49719 4.90505 4.29041 3.98823 5.30998 3.39287C6.32954 2.7975 7.51783 2.55724 8.68861 2.70972C9.85938 2.8622 10.9465 3.39882 11.7795 4.23548C12.6126 5.07213 13.1445 6.16154 13.292 7.33296M3.05463 5.99963H5.99996M13.3333 13.333V9.99963H12.946M12.946 9.99963C12.5028 11.0936 11.7093 12.0097 10.6898 12.6045C9.67038 13.1993 8.48245 13.4393 7.31203 13.2869C6.1416 13.1344 5.05476 12.5982 4.22165 11.7621C3.38854 10.926 2.8562 9.83726 2.70796 8.66629M12.946 9.99963H9.99996" stroke="#1C64F2" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span className='text-primary-600 text-[13px] font-semibold'>{t('common.operation.refresh')}</span>
-              </Button>
+      <Collapsible open={expanded} onOpenChange={setExpanded} render={<div className="shrink-0" />}>
+        <div className="flex items-center justify-between px-4 pt-3 pb-2">
+          <h2 className="system-xl-semibold text-text-primary">
+            {t(($) => $['inputs.title'], { ns: 'appDebug' })}
+          </h2>
+          <div className="flex items-center">
+            {debugWithMultipleModel ? (
+              <>
+                <Button
+                  variant="ghost-accent"
+                  onClick={() =>
+                    onMultipleModelConfigsChange(true, [
+                      ...multipleModelConfigs,
+                      { id: `${Date.now()}`, model: '', provider: '', parameters: {} },
+                    ])
+                  }
+                  disabled={multipleModelConfigs.length >= 4 || !canTestAndRun}
+                >
+                  <span aria-hidden="true" className="i-ri-add-line size-3.5" />
+                  {t(($) => $['modelProvider.addModel'], { ns: 'modelProvider' })}(
+                  {multipleModelConfigs.length}
+                  /4)
+                </Button>
+                <div className="mx-2 h-3.5 w-px bg-divider-regular" />
+              </>
+            ) : null}
+            {mode !== 'completion' && (
+              <>
+                {canTestAndRun && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <IconButton
+                          aria-label={t(($) => $['operation.refresh'], { ns: 'common' })}
+                          onClick={clearConversation}
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="i-custom-vender-line-arrows-refresh-ccw-01 size-4"
+                          />
+                        </IconButton>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $['operation.refresh'], { ns: 'common' })}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+
+                {varList.length > 0 && (
+                  <div className="relative ms-1 me-2">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <CollapsibleTrigger
+                            className="rounded-lg text-text-secondary data-panel-open:bg-state-accent-active data-panel-open:text-text-accent data-panel-open:hover:bg-state-accent-active-alt"
+                            render={
+                              <IconButton
+                                aria-label={t(($) => $['panel.userInputField'], { ns: 'workflow' })}
+                                disabled={!canTestAndRun}
+                              >
+                                <span aria-hidden="true" className="i-ri-equalizer-2-line size-4" />
+                              </IconButton>
+                            }
+                          />
+                        }
+                      />
+                      <TooltipContent>
+                        {t(($) => $['panel.userInputField'], { ns: 'workflow' })}
+                      </TooltipContent>
+                    </Tooltip>
+                    {expanded && (
+                      <div className="absolute inset-e-1.25 -bottom-3.5 z-10 h-3 w-3 rotate-45 border-s-[0.5px] border-t-[0.5px] border-components-panel-border-subtle bg-components-panel-on-panel-item-bg rtl:-rotate-45" />
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
-        <PromptValuePanel
-          appType={mode as AppType}
-          onSend={handleSendTextCompletion}
-          inputs={inputs}
-          visionConfig={{
-            ...visionConfig,
-            image_file_size_limit: fileUploadConfigResponse?.image_file_size_limit,
-          }}
-          onVisionFilesChange={setCompletionFiles}
-        />
-      </div>
-      {
-        debugWithMultipleModel && (
-          <div className='grow mt-3 overflow-hidden'>
-            <DebugWithMultipleModel
-              multipleModelConfigs={multipleModelConfigs}
-              onMultipleModelConfigsChange={onMultipleModelConfigsChange}
-              onDebugWithMultipleModelChange={handleChangeToSingleModel}
-              checkCanSend={checkCanSend}
-            />
-          </div>
-        )
-      }
-      {
-        !debugWithMultipleModel && (
-          <div className="flex flex-col grow" ref={ref}>
-            {/* Chat */}
-            {mode !== AppType.completion && (
-              <div className='grow h-0 overflow-hidden'>
-                <DebugWithSingleModel
-                  ref={debugWithSingleModelRef}
-                  checkCanSend={checkCanSend}
-                />
-              </div>
-            )}
-            {/* Text  Generation */}
-            {mode === AppType.completion && (
-              <div className="mt-6 px-6 pb-4">
-                <GroupName name={t('appDebug.result')} />
-                {(completionRes || isResponding) && (
-                  <TextGeneration
-                    className="mt-2"
-                    content={completionRes}
-                    isLoading={!completionRes && isResponding}
-                    isShowTextToSpeech={textToSpeechConfig.enabled && !!text2speechDefaultModel}
-                    isResponding={isResponding}
-                    isInstalledApp={false}
-                    messageId={messageId}
-                    isError={false}
-                    onRetry={() => { }}
-                    supportAnnotation
-                    appId={appId}
-                    varList={varList}
-                  />
-                )}
-              </div>
-            )}
-            {mode === AppType.completion && showPromptLogModal && (
-              <PromptLogModal
-                width={width}
-                currentLogItem={currentLogItem}
-                onCancel={() => {
-                  setCurrentLogItem()
-                  setShowPromptLogModal(false)
-                }}
-              />
-            )}
-            {isShowCannotQueryDataset && (
-              <CannotQueryDataset
-                onConfirm={() => setShowCannotQueryDataset(false)}
-              />
-            )}
-          </div>
-        )
-      }
-      {isShowFormattingChangeConfirm && (
-        <FormattingChanged
-          onConfirm={handleConfirm}
-          onCancel={handleCancel}
-        />
+        {mode !== 'completion' && (
+          <CollapsiblePanel render={<div className="mx-3" />}>
+            <ChatUserInput inputs={inputs} />
+          </CollapsiblePanel>
+        )}
+        {mode === 'completion' && (
+          <PromptValuePanel
+            appType={mode}
+            onSend={handleSendTextCompletion}
+            inputs={inputs}
+            visionConfig={{
+              ...(features.file! as VisionSettings),
+              transfer_methods: features.file!.allowed_file_upload_methods || [],
+              image_file_size_limit: features.file?.fileUploadConfig?.image_file_size_limit,
+            }}
+            onVisionFilesChange={setCompletionFiles}
+          />
+        )}
+      </Collapsible>
+      {debugWithMultipleModel && (
+        <div className="mt-3 grow overflow-hidden" ref={ref}>
+          <DebugWithMultipleModel
+            multipleModelConfigs={multipleModelConfigs}
+            onMultipleModelConfigsChange={onMultipleModelConfigsChange}
+            onDebugWithMultipleModelChange={handleChangeToSingleModel}
+            checkCanSend={checkCanSend}
+            onOpenLog={handleOpenLog}
+          />
+        </div>
       )}
-      {!hasSetAPIKEY && (<HasNotSetAPIKEY isTrailFinished={!IS_CE_EDITION} onSetting={onSetting} />)}
+      {!debugWithMultipleModel && (
+        <div className="flex grow flex-col" ref={ref}>
+          {/* No model provider configured */}
+          {(!modelConfig.provider || !hasActiveProvider) && (
+            <HasNotSetAPIKEY onSetting={onSetting} />
+          )}
+          {/* No model selected */}
+          {modelConfig.provider && hasActiveProvider && !modelConfig.model_id && (
+            <div className="flex grow flex-col items-center justify-center pb-30">
+              <div className="flex w-full max-w-100 flex-col gap-2 px-4 py-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-[10px]">
+                  <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-[10px] border-[0.5px] border-components-card-border bg-components-card-bg p-1 shadow-lg backdrop-blur-[5px]">
+                    <span className="i-ri-brain-2-line size-5 text-text-tertiary" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="system-md-semibold text-text-secondary">
+                    {t(($) => $.noModelSelected, { ns: 'appDebug' })}
+                  </div>
+                  <div className="system-xs-regular text-text-tertiary">
+                    {t(($) => $.noModelSelectedTip, { ns: 'appDebug' })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Chat */}
+          {mode !== 'completion' && (
+            <div className="h-0 grow overflow-hidden">
+              <DebugWithSingleModel
+                ref={debugWithSingleModelRef}
+                checkCanSend={checkCanSend}
+                onOpenLog={handleOpenLog}
+                chatContainerRef={singleChatContainerRef}
+              />
+            </div>
+          )}
+          {/* Text  Generation */}
+          {mode === 'completion' && (
+            <>
+              {(completionRes || isResponding) && (
+                <>
+                  <div className="mx-4 mt-3">
+                    <GroupName name={t(($) => $.result, { ns: 'appDebug' })} />
+                  </div>
+                  <div className="mx-3 mb-8">
+                    <TextGeneration
+                      appSourceType={AppSourceType.webApp}
+                      className="mt-2"
+                      content={completionRes}
+                      isLoading={!completionRes && isResponding}
+                      isShowTextToSpeech={textToSpeechConfig.enabled && !!text2speechDefaultModel}
+                      isResponding={isResponding}
+                      messageId={messageId}
+                      isError={false}
+                      onRetry={noop}
+                      siteInfo={null}
+                      onOpenLog={handleOpenLog}
+                    />
+                  </div>
+                </>
+              )}
+              {!completionRes && !isResponding && (
+                <div className="flex grow flex-col items-center justify-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="i-ri-sparkling-fill size-12 text-text-empty-state-icon"
+                  />
+                  <div className="system-sm-regular text-text-quaternary">
+                    {t(($) => $.noResult, { ns: 'appDebug' })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {isShowCannotQueryDataset && (
+            <CannotQueryDataset onConfirm={() => setShowCannotQueryDataset(false)} />
+          )}
+        </div>
+      )}
+      {selectedLogItem &&
+        (selectedLogItem.agent_thoughts?.length ? (
+          <AgentLogModal
+            appId={appId}
+            width={logModalWidth}
+            currentLogItem={selectedLogItem}
+            onCancel={() => setSelectedLogItem(undefined)}
+          />
+        ) : (
+          <PromptLogModal
+            width={logModalWidth}
+            currentLogItem={selectedLogItem}
+            onCancel={() => setSelectedLogItem(undefined)}
+          />
+        ))}
+      {isShowFormattingChangeConfirm && (
+        <FormattingChanged onConfirm={handleConfirm} onCancel={handleCancel} />
+      )}
     </>
   )
 }

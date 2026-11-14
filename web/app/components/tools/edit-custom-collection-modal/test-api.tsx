@@ -1,39 +1,57 @@
 'use client'
 import type { FC } from 'react'
-import React, { useState } from 'react'
+import type {
+  Credential,
+  CustomCollectionBackend,
+  CustomParamSchema,
+} from '@/app/components/tools/types'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
+import {
+  Drawer,
+  DrawerBackdrop,
+  DrawerClose,
+  DrawerContent,
+  DrawerPopup,
+  DrawerPortal,
+  DrawerTitle,
+  DrawerViewport,
+} from '@langgenius/dify-ui/drawer'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { Input } from '@langgenius/dify-ui/input'
+import { RiSettings2Line } from '@remixicon/react'
+import * as React from 'react'
+import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useContext } from 'use-context-selector'
-import { Settings01 } from '../../base/icons/src/vender/line/general'
-import ConfigCredentials from './config-credentials'
-import { AuthType, type Credential, type CustomCollectionBackend, type CustomParamSchema } from '@/app/components/tools/types'
-import Button from '@/app/components/base/button'
-import Drawer from '@/app/components/base/drawer-plus'
-import I18n from '@/context/i18n'
+import { useLocale } from '#i18n'
+import { AuthType } from '@/app/components/tools/types'
+import { getPluginLanguage } from '@/i18n/metadata'
 import { testAPIAvailable } from '@/service/tools'
-import { getLanguage } from '@/i18n/language'
+import ConfigCredentials from './config-credentials'
 
-type Props = {
+type Props = Readonly<{
+  positionCenter?: boolean
   customCollection: CustomCollectionBackend
   tool: CustomParamSchema
   onHide: () => void
-}
+}>
 
-const keyClassNames = 'py-2 leading-5 text-sm font-medium text-gray-900'
-
-const TestApi: FC<Props> = ({
-  customCollection,
-  tool,
-  onHide,
-}) => {
-  const { t } = useTranslation()
-  const { locale } = useContext(I18n)
-  const language = getLanguage(locale)
+const TestApi: FC<Props> = ({ positionCenter, customCollection, tool, onHide }) => {
+  const { t } = useTranslation(['common', 'tools'])
+  const parameterId = useId()
+  const locale = useLocale()
+  const language = getPluginLanguage(locale)
   const [credentialsModalShow, setCredentialsModalShow] = useState(false)
-  const [tempCredential, setTempCredential] = React.useState<Credential>(customCollection.credentials)
+  const [tempCredential, setTempCredential] = React.useState<Credential>(
+    customCollection.credentials,
+  )
+  const [testing, setTesting] = useState(false)
   const [result, setResult] = useState<string>('')
   const { operation_id: toolName, parameters } = tool
   const [parametersValue, setParametersValue] = useState<Record<string, string>>({})
   const handleTest = async () => {
+    if (testing) return
+    setTesting(true)
     // clone test schema
     const credentials = JSON.parse(JSON.stringify(tempCredential)) as Credential
     if (credentials.auth_type === AuthType.none) {
@@ -49,81 +67,166 @@ const TestApi: FC<Props> = ({
       schema: customCollection.schema,
       parameters: parametersValue,
     }
-    const res = await testAPIAvailable(data) as any
+    const res = (await testAPIAvailable(data)) as any
     setResult(res.error || res.result)
+    setTesting(false)
   }
 
   return (
     <>
       <Drawer
-        isShow
-        onHide={onHide}
-        title={`${t('tools.test.title')}  ${toolName}`}
-        panelClassName='mt-2 !w-[600px]'
-        maxWidthClassName='!max-w-[600px]'
-        height='calc(100vh - 16px)'
-        headerClassName='!border-b-black/5'
-        body={
-          <div className='pt-2 px-6 overflow-y-auto'>
-            <div className='space-y-4'>
-              <div>
-                <div className={keyClassNames}>{t('tools.createTool.authMethod.title')}</div>
-                <div className='flex items-center h-9 justify-between px-2.5 bg-gray-100 rounded-lg cursor-pointer' onClick={() => setCredentialsModalShow(true)}>
-                  <div className='text-sm font-normal text-gray-900'>{t(`tools.createTool.authMethod.types.${tempCredential.auth_type}`)}</div>
-                  <Settings01 className='w-4 h-4 text-gray-700 opacity-60' />
+        open
+        modal
+        disablePointerDismissal
+        swipeDirection="right"
+        onOpenChange={(open) => {
+          if (!open) onHide()
+        }}
+      >
+        <DrawerPortal>
+          <DrawerBackdrop forceRender />
+          <DrawerViewport>
+            <DrawerPopup
+              className={cn(
+                'data-[swipe-direction=right]:top-2 data-[swipe-direction=right]:bottom-2 data-[swipe-direction=right]:h-auto data-[swipe-direction=right]:w-150 data-[swipe-direction=right]:max-w-[calc(100vw-1rem)] data-[swipe-direction=right]:rounded-xl data-[swipe-direction=right]:ring-divider-subtle',
+                positionCenter
+                  ? 'data-[swipe-direction=right]:right-[max(0.5rem,calc(50%-300px))]'
+                  : 'data-[swipe-direction=right]:right-2',
+              )}
+            >
+              <DrawerContent>
+                <div className="shrink-0 border-b border-divider-regular py-4">
+                  <div className="flex h-6 items-center justify-between ps-6 pe-5">
+                    <DrawerTitle className="min-w-0 truncate system-xl-semibold text-text-primary">
+                      {`${t(($) => $['test.title'], { ns: 'tools' })}  ${toolName}`}
+                    </DrawerTitle>
+                    <DrawerClose
+                      render={
+                        <IconButton
+                          aria-label={t(($) => $['operation.close'], { ns: 'common' })}
+                          size="md"
+                        >
+                          <span aria-hidden="true" className="i-ri-close-line size-4" />
+                        </IconButton>
+                      }
+                    />
+                  </div>
                 </div>
-              </div>
+                <form
+                  className="min-h-0 flex-1 overflow-y-auto px-6 pt-2"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void handleTest()
+                  }}
+                >
+                  <div className="space-y-4">
+                    <div>
+                      <div className="py-2 system-sm-medium text-text-primary">
+                        {t(($) => $['createTool.authMethod.title'], { ns: 'tools' })}
+                      </div>
+                      <button
+                        type="button"
+                        className="flex h-9 w-full cursor-pointer items-center justify-between rounded-lg bg-components-input-bg-normal px-2.5 outline-hidden focus-visible:ring-2 focus-visible:ring-state-accent-solid"
+                        onClick={() => setCredentialsModalShow(true)}
+                      >
+                        <span className="system-xs-regular text-text-primary">
+                          {t(($) => $[`createTool.authMethod.types.${tempCredential.auth_type}`], {
+                            ns: 'tools',
+                          })}
+                        </span>
+                        <RiSettings2Line aria-hidden className="size-4 text-text-secondary" />
+                      </button>
+                    </div>
 
-              <div>
-                <div className={keyClassNames}>{t('tools.test.parametersValue')}</div>
-                <div className='rounded-lg border border-gray-200'>
-                  <table className='w-full leading-[18px] text-xs text-gray-700 font-normal'>
-                    <thead className='text-gray-500 uppercase'>
-                      <tr className='border-b border-gray-200'>
-                        <th className="p-2 pl-3 font-medium">{t('tools.test.parameters')}</th>
-                        <th className="p-2 pl-3 font-medium">{t('tools.test.value')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {parameters.map((item, index) => (
-                        <tr key={index} className='border-b last:border-0 border-gray-200'>
-                          <td className="py-2 pl-3 pr-2.5">
-                            {item.label[language]}
-                          </td>
-                          <td className="">
-                            <input
-                              value={parametersValue[item.name] || ''}
-                              onChange={e => setParametersValue({ ...parametersValue, [item.name]: e.target.value })}
-                              type='text' className='px-3 h-[34px] w-full outline-none focus:bg-gray-100' ></input>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-            </div>
-            <Button type='primary' className=' mt-4 w-full h-10 !text-[13px] leading-[18px] font-medium' onClick={handleTest}>{t('tools.test.title')}</Button>
-            <div className='mt-6'>
-              <div className='flex items-center space-x-3'>
-                <div className='leading-[18px] text-xs font-semibold text-gray-500'>{t('tools.test.testResult')}</div>
-                <div className='grow w-0 h-px bg-[rgb(243, 244, 246)]'></div>
-              </div>
-              <div className='mt-2 px-3 py-2 h-[200px] overflow-y-auto overflow-x-hidden rounded-lg bg-gray-100 leading-4 text-xs font-normal text-gray-700'>
-                {result || <span className='text-gray-400'>{t('tools.test.testResultPlaceholder')}</span>}
-              </div>
-            </div>
-          </div>
-        }
-      />
+                    <div>
+                      <div className="py-2 system-sm-medium text-text-primary">
+                        {t(($) => $['test.parametersValue'], { ns: 'tools' })}
+                      </div>
+                      <div className="rounded-lg border border-divider-regular">
+                        <table className="w-full body-xs-regular text-text-secondary">
+                          <thead className="text-text-tertiary uppercase">
+                            <tr className="border-b border-divider-regular">
+                              <th className="p-2 ps-3 font-medium">
+                                {t(($) => $['test.parameters'], { ns: 'tools' })}
+                              </th>
+                              <th className="p-2 ps-3 font-medium">
+                                {t(($) => $['test.value'], { ns: 'tools' })}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {parameters.map((item, index) => (
+                              <tr
+                                key={index}
+                                className="border-b border-divider-regular last:border-0"
+                              >
+                                <td className="py-2 ps-3 pe-2.5">
+                                  <label htmlFor={`${parameterId}-${item.name}`}>
+                                    {item.label[language]}
+                                  </label>
+                                </td>
+                                <td className="">
+                                  <Input
+                                    id={`${parameterId}-${item.name}`}
+                                    name={item.name}
+                                    value={parametersValue[item.name] || ''}
+                                    onValueChange={(value) =>
+                                      setParametersValue({
+                                        ...parametersValue,
+                                        [item.name]: value,
+                                      })
+                                    }
+                                    type="text"
+                                    className="bg-transparent"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    variant="primary"
+                    className="mt-4 h-10 w-full"
+                    loading={testing}
+                    type="submit"
+                  >
+                    {t(($) => $['test.title'], { ns: 'tools' })}
+                  </Button>
+                  <div className="mt-6">
+                    <div className="flex items-center space-x-3">
+                      <div className="system-xs-semibold text-text-tertiary">
+                        {t(($) => $['test.testResult'], { ns: 'tools' })}
+                      </div>
+                      <div className="h-px w-0 grow"></div>
+                    </div>
+                    <div
+                      role="status"
+                      className="mt-2 h-50 overflow-x-hidden overflow-y-auto rounded-lg bg-components-input-bg-normal px-3 py-2 system-xs-regular text-text-secondary"
+                    >
+                      {result || (
+                        <span className="text-text-quaternary">
+                          {t(($) => $['test.testResultPlaceholder'], { ns: 'tools' })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </form>
+              </DrawerContent>
+            </DrawerPopup>
+          </DrawerViewport>
+        </DrawerPortal>
+      </Drawer>
       {credentialsModalShow && (
         <ConfigCredentials
+          positionCenter={positionCenter}
           credential={tempCredential}
           onChange={setTempCredential}
           onHide={() => setCredentialsModalShow(false)}
-        />)
-      }
+        />
+      )}
     </>
   )
 }

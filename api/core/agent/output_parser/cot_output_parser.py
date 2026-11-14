@@ -1,177 +1,250 @@
 import json
 import re
 from collections.abc import Generator
-from typing import Union
+from typing import Any
 
 from core.agent.entities import AgentScratchpadUnit
-from core.model_runtime.entities.llm_entities import LLMResultChunk
+from graphon.model_runtime.entities.llm_entities import LLMResultChunk
+
+# Keys that name the action even when the model adds other fields to the JSON blob,
+# highest priority first, so the selected tool does not depend on JSON key order.
+_ACTION_NAME_KEYS = ("action", "action_name", "tool", "tool_name", "name")
 
 
 class CotAgentOutputParser:
     @classmethod
-    def handle_react_stream_output(cls, llm_response: Generator[LLMResultChunk, None, None]) -> \
-        Generator[Union[str, AgentScratchpadUnit.Action], None, None]:
-        def parse_action(json_str):
-            try:
-                action = json.loads(json_str)
-                action_name = None
-                action_input = None
+    def handle_react_stream_output(
+        cls, llm_response: Generator[LLMResultChunk], usage_dict: dict[str, Any]
+    ) -> Generator[str | AgentScratchpadUnit.Action]:
+        def parse_action(action) -> str | AgentScratchpadUnit.Action:
+            """Convert model-generated JSON into an action, or fall back to text.
 
-                for key, value in action.items():
-                    if 'input' in key.lower():
-                        action_input = value
-                    else:
-                        action_name = value
+            Preconditions: ``action`` is a JSON string or a decoded JSON list or object.
+            Postconditions: returns an action only when a string name and a dict or string
+            input are found; every other payload is returned as readable text and never raises.
+            The prompt allows one action per step, so only the first list item is considered.
+            The name comes from the highest-priority key in ``_ACTION_NAME_KEYS``, or from the
+            last non-input key when no known key is present.
+            """
+            action_name = None
+            action_input = None
+            if isinstance(action, str):
+                try:
+                    action = json.loads(action, strict=False)
+                except json.JSONDecodeError:
+                    return action or ""
 
-                if action_name is not None and action_input is not None:
-                    return AgentScratchpadUnit.Action(
-                        action_name=action_name,
-                        action_input=action_input,
-                    )
+            payload = action
+            # cohere always returns a list
+            if isinstance(action, list) and action:
+                action = action[0]
+
+            if not isinstance(action, dict):
+                return json.dumps(payload, ensure_ascii=False)
+
+            name_candidates = {}
+            for key, value in action.items():
+                normalized_key = key.lower()
+                if "input" in normalized_key:
+                    action_input = value
                 else:
-                    return json_str or ''
-            except:
-                return json_str or ''
-            
-        def extra_json_from_code_block(code_block) -> Generator[Union[dict, str], None, None]:
-            code_blocks = re.findall(r'```(.*?)```', code_block, re.DOTALL)
-            if not code_blocks:
-                return
-            for block in code_blocks:
-                json_text = re.sub(r'^[a-zA-Z]+\n', '', block.strip(), flags=re.MULTILINE)
-                yield parse_action(json_text)
-            
-        code_block_cache = ''
+                    name_candidates[normalized_key] = value
+                    action_name = value
+
+            known_name_keys = [key for key in _ACTION_NAME_KEYS if key in name_candidates]
+            if known_name_keys:
+                action_name = name_candidates[known_name_keys[0]]
+
+            if isinstance(action_name, str) and isinstance(action_input, dict | str):
+                return AgentScratchpadUnit.Action(
+                    action_name=action_name,
+                    action_input=action_input,
+                )
+            else:
+                return json.dumps(payload, ensure_ascii=False)
+
+        def extra_json_from_code_block(code_block) -> list[list | dict]:
+            blocks = re.findall(r"```[json]*\s*([\[{].*[]}])\s*```", code_block, re.DOTALL | re.IGNORECASE)
+            if not blocks:
+                return []
+            try:
+                json_blocks = []
+                for block in blocks:
+                    json_text = re.sub(r"^[a-zA-Z]+\n", "", block.strip(), flags=re.MULTILINE)
+                    json_blocks.append(json.loads(json_text, strict=False))
+                return json_blocks
+            except Exception:
+                return []
+
+        code_block_cache = ""
         code_block_delimiter_count = 0
         in_code_block = False
-        json_cache = ''
-        json_quote_count = 0
+        json_cache = ""
+        json_depth = 0
+        in_json_string = False
+        json_escape = False
         in_json = False
         got_json = False
 
-        action_cache = ''
-        action_str = 'action:'
+        action_cache = ""
+        action_str = "action:"
         action_idx = 0
 
-        thought_cache = ''
-        thought_str = 'thought:'
+        thought_cache = ""
+        thought_str = "thought:"
         thought_idx = 0
 
+        last_character = ""
+
         for response in llm_response:
-            response = response.delta.message.content
-            if not isinstance(response, str):
+            if response.delta.usage:
+                usage_dict["usage"] = response.delta.usage
+            response_content = response.delta.message.content
+            if not isinstance(response_content, str):
                 continue
 
             # stream
             index = 0
-            while index < len(response):
+            while index < len(response_content):
                 steps = 1
-                delta = response[index:index+steps]
-                last_character = response[index-1] if index > 0 else ''
+                delta = response_content[index : index + steps]
+                yield_delta = False
 
-                if delta == '`':
+                if not in_json and delta == "`":
+                    last_character = delta
                     code_block_cache += delta
                     code_block_delimiter_count += 1
                 else:
                     if not in_code_block:
                         if code_block_delimiter_count > 0:
+                            last_character = delta
                             yield code_block_cache
-                        code_block_cache = ''
+                        code_block_cache = ""
                     else:
+                        last_character = delta
                         code_block_cache += delta
                     code_block_delimiter_count = 0
 
                 if not in_code_block and not in_json:
                     if delta.lower() == action_str[action_idx] and action_idx == 0:
-                        if last_character not in ['\n', ' ', '']:
+                        if last_character not in {"\n", " ", ""}:
+                            yield_delta = True
+                        else:
+                            last_character = delta
+                            action_cache += delta
+                            action_idx += 1
+                            if action_idx == len(action_str):
+                                action_cache = ""
+                                action_idx = 0
                             index += steps
-                            yield delta
                             continue
-
-                        action_cache += delta
-                        action_idx += 1
-                        if action_idx == len(action_str):
-                            action_cache = ''
-                            action_idx = 0
-                        index += steps
-                        continue
                     elif delta.lower() == action_str[action_idx] and action_idx > 0:
+                        last_character = delta
                         action_cache += delta
                         action_idx += 1
                         if action_idx == len(action_str):
-                            action_cache = ''
+                            action_cache = ""
                             action_idx = 0
                         index += steps
                         continue
                     else:
                         if action_cache:
+                            last_character = delta
                             yield action_cache
-                            action_cache = ''
+                            action_cache = ""
                             action_idx = 0
-                    
-                    if delta.lower() == thought_str[thought_idx] and thought_idx == 0:
-                        if last_character not in ['\n', ' ', '']:
-                            index += steps
-                            yield delta
-                            continue
 
-                        thought_cache += delta
-                        thought_idx += 1
-                        if thought_idx == len(thought_str):
-                            thought_cache = ''
-                            thought_idx = 0
-                        index += steps
-                        continue
+                    if delta.lower() == thought_str[thought_idx] and thought_idx == 0:
+                        if last_character not in {"\n", " ", ""}:
+                            yield_delta = True
+                        else:
+                            last_character = delta
+                            thought_cache += delta
+                            thought_idx += 1
+                            if thought_idx == len(thought_str):
+                                thought_cache = ""
+                                thought_idx = 0
+                            index += steps
+                            continue
                     elif delta.lower() == thought_str[thought_idx] and thought_idx > 0:
+                        last_character = delta
                         thought_cache += delta
                         thought_idx += 1
                         if thought_idx == len(thought_str):
-                            thought_cache = ''
+                            thought_cache = ""
                             thought_idx = 0
                         index += steps
                         continue
                     else:
                         if thought_cache:
+                            last_character = delta
                             yield thought_cache
-                            thought_cache = ''
+                            thought_cache = ""
                             thought_idx = 0
+
+                    if yield_delta:
+                        index += steps
+                        last_character = delta
+                        yield delta
+                        continue
 
                 if code_block_delimiter_count == 3:
                     if in_code_block:
-                        yield from extra_json_from_code_block(code_block_cache)
-                        code_block_cache = ''
-                        
+                        last_character = delta
+                        action_json_list = extra_json_from_code_block(code_block_cache)
+                        if action_json_list:
+                            for action_json in action_json_list:
+                                yield parse_action(action_json)
+                            code_block_cache = ""
+                        else:
+                            index += steps
+                            continue
+
                     in_code_block = not in_code_block
                     code_block_delimiter_count = 0
 
                 if not in_code_block:
                     # handle single json
-                    if delta == '{':
-                        json_quote_count += 1
-                        in_json = True
+                    if got_json:
+                        got_json = False
+                        last_character = delta
+                        yield parse_action(json_cache)
+                        json_cache = ""
+                    if not in_json:
+                        if delta == "{":
+                            last_character = delta
+                            in_json = True
+                            json_depth = 1
+                            in_json_string = False
+                            json_escape = False
+                            json_cache = delta
+                    else:
+                        last_character = delta
                         json_cache += delta
-                    elif delta == '}':
-                        json_cache += delta
-                        if json_quote_count > 0:
-                            json_quote_count -= 1
-                            if json_quote_count == 0:
+                        # Braces inside a string value are content, not structure:
+                        # only an unquoted "{" or "}" may move the payload boundary.
+                        if json_escape:
+                            json_escape = False
+                        elif in_json_string:
+                            if delta == "\\":
+                                json_escape = True
+                            elif delta == '"':
+                                in_json_string = False
+                        elif delta == '"':
+                            in_json_string = True
+                        elif delta == "{":
+                            json_depth += 1
+                        elif delta == "}":
+                            json_depth -= 1
+                            if json_depth == 0:
                                 in_json = False
                                 got_json = True
                                 index += steps
                                 continue
-                    else:
-                        if in_json:
-                            json_cache += delta
 
-                    if got_json:
-                        got_json = False
-                        yield parse_action(json_cache)
-                        json_cache = ''
-                        json_quote_count = 0
-                        in_json = False
-                    
                 if not in_code_block and not in_json:
-                    yield delta.replace('`', '')
+                    last_character = delta
+                    yield delta.replace("`", "")
 
                 index += steps
 
@@ -181,3 +254,10 @@ class CotAgentOutputParser:
         if json_cache:
             yield parse_action(json_cache)
 
+        # Flush a trailing incomplete "action:"/"thought:" prefix so ordinary
+        # text at the end of the stream is not silently dropped (issue #43350).
+        if action_cache:
+            yield action_cache
+
+        if thought_cache:
+            yield thought_cache

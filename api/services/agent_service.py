@@ -1,67 +1,92 @@
+import threading
+from typing import Any
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+import contexts
 from core.app.app_config.easy_ui_based_app.agent.manager import AgentConfigManager
+from core.plugin.entities.plugin_daemon import PluginAgentProviderEntity
+from core.plugin.impl.agent import PluginAgentClient
+from core.plugin.impl.exc import PluginDaemonClientSideError
+from core.tools.entities.tool_entities import EmojiIconDict
 from core.tools.tool_manager import ToolManager
-from extensions.ext_database import db
-from models.account import Account
-from models.model import App, Conversation, EndUser, Message, MessageAgentThought
+from libs.login import current_user
+from models import Account
+from models.model import App, Conversation, EndUser, Message, load_annotation_reply_config
 
 
 class AgentService:
     @classmethod
-    def get_agent_logs(cls, app_model: App, 
-                       conversation_id: str,
-                       message_id: str) -> dict:
+    def get_agent_logs(cls, app_model: App, conversation_id: str, message_id: str, session: Session):
         """
         Service to get agent logs
         """
-        conversation: Conversation = db.session.query(Conversation).filter(
-            Conversation.id == conversation_id,
-            Conversation.app_id == app_model.id,
-        ).first()
+        contexts.plugin_tool_providers.set({})
+        contexts.plugin_tool_providers_lock.set(threading.Lock())
+
+        conversation: Conversation | None = session.scalar(
+            select(Conversation)
+            .where(
+                Conversation.id == conversation_id,
+                Conversation.app_id == app_model.id,
+            )
+            .limit(1)
+        )
 
         if not conversation:
             raise ValueError(f"Conversation not found: {conversation_id}")
 
-        message: Message = db.session.query(Message).filter(
-            Message.id == message_id,
-            Message.conversation_id == conversation_id,
-        ).first()
+        message: Message | None = session.scalar(
+            select(Message)
+            .where(
+                Message.id == message_id,
+                Message.conversation_id == conversation_id,
+            )
+            .limit(1)
+        )
 
         if not message:
             raise ValueError(f"Message not found: {message_id}")
-        
-        agent_thoughts: list[MessageAgentThought] = message.agent_thoughts
+
+        agent_thoughts = message.agent_thoughts_with_session(session=session)
 
         if conversation.from_end_user_id:
             # only select name field
-            executor = db.session.query(EndUser, EndUser.name).filter(
-                EndUser.id == conversation.from_end_user_id
-            ).first()
+            executor_name = session.scalar(select(EndUser.name).where(EndUser.id == conversation.from_end_user_id))
         else:
-            executor = db.session.query(Account, Account.name).filter(
-                Account.id == conversation.from_account_id
-            ).first()
-        
-        if executor:
-            executor = executor.name
-        else:
-            executor = 'Unknown'
+            executor_name = session.scalar(select(Account.name).where(Account.id == conversation.from_account_id))
 
-        result = {
-            'meta': {
-                'status': 'success',
-                'executor': executor,
-                'start_time': message.created_at.isoformat(),
-                'elapsed_time': message.provider_response_latency,
-                'total_tokens': message.answer_tokens + message.message_tokens,
-                'agent_mode': app_model.app_model_config.agent_mode_dict.get('strategy', 'react'),
-                'iterations': len(agent_thoughts),
+        executor = executor_name or "Unknown"
+        assert isinstance(current_user, Account)
+        assert current_user.timezone is not None
+        timezone = ZoneInfo(current_user.timezone)
+
+        app_model_config = app_model.app_model_config_with_session(session=session)
+        if not app_model_config:
+            raise ValueError("App model config not found")
+
+        result: dict[str, Any] = {
+            "meta": {
+                "status": "success",
+                "executor": executor,
+                "start_time": message.created_at.astimezone(timezone).isoformat(),
+                "elapsed_time": message.provider_response_latency,
+                "total_tokens": message.answer_tokens + message.message_tokens,
+                "agent_mode": app_model_config.agent_mode_dict.get("strategy", "react"),
+                "iterations": len(agent_thoughts),
             },
-            'iterations': [],
-            'files': message.files,
+            "iterations": [],
+            "files": message.message_files_with_session(session=session),
         }
 
-        agent_config = AgentConfigManager.convert(app_model.app_model_config.to_dict())
-        agent_tools = agent_config.tools
+        annotation_reply = load_annotation_reply_config(session, app_model.id)
+        agent_config = AgentConfigManager.convert(app_model_config.to_dict(annotation_reply=annotation_reply))
+        if not agent_config:
+            raise ValueError("Agent config not found")
+
+        agent_tools = agent_config.tools or []
 
         def find_agent_tool(tool_name: str):
             for agent_tool in agent_tools:
@@ -73,7 +98,7 @@ class AgentService:
             tool_labels = agent_thought.tool_labels
             tool_meta = agent_thought.tool_meta
             tool_inputs = agent_thought.tool_inputs_dict
-            tool_outputs = agent_thought.tool_outputs_dict
+            tool_outputs = agent_thought.tool_outputs_dict or {}
             tool_calls = []
             for tool in tools:
                 tool_name = tool
@@ -81,12 +106,23 @@ class AgentService:
                 tool_input = tool_inputs.get(tool_name, {})
                 tool_output = tool_outputs.get(tool_name, {})
                 tool_meta_data = tool_meta.get(tool_name, {})
-                tool_config = tool_meta_data.get('tool_config', {})
-                if tool_config.get('tool_provider_type', '') != 'dataset-retrieval':
+                tool_config = tool_meta_data.get("tool_config", {})
+                tool_provider_type = tool_config.get("tool_provider_type", "")
+                tool_provider_id = tool_config.get("tool_provider", "")
+
+                if not tool_provider_type:
+                    tool_entity = find_agent_tool(tool_name)
+                    if tool_entity:
+                        tool_provider_type = tool_entity.provider_type
+                        tool_provider_id = tool_provider_id or tool_entity.provider_id
+
+                tool_icon: str | EmojiIconDict = ""
+
+                if tool_provider_type and tool_provider_type != "dataset-retrieval":
                     tool_icon = ToolManager.get_tool_icon(
                         tenant_id=app_model.tenant_id,
-                        provider_type=tool_config.get('tool_provider_type', ''),
-                        provider_id=tool_config.get('tool_provider', ''),
+                        provider_type=tool_provider_type,
+                        provider_id=tool_provider_id,
                     )
                     if not tool_icon:
                         tool_entity = find_agent_tool(tool_name)
@@ -97,30 +133,53 @@ class AgentService:
                                 provider_id=tool_entity.provider_id,
                             )
                 else:
-                    tool_icon = ''
+                    tool_icon = ""
 
-                tool_calls.append({
-                    'status': 'success' if not tool_meta_data.get('error') else 'error',
-                    'error': tool_meta_data.get('error'),
-                    'time_cost': tool_meta_data.get('time_cost', 0),
-                    'tool_name': tool_name,
-                    'tool_label': tool_label,
-                    'tool_input': tool_input,
-                    'tool_output': tool_output,
-                    'tool_parameters': tool_meta_data.get('tool_parameters', {}),
-                    'tool_icon': tool_icon,
-                })
+                tool_calls.append(
+                    {
+                        "status": "success" if not tool_meta_data.get("error") else "error",
+                        "error": tool_meta_data.get("error"),
+                        "time_cost": tool_meta_data.get("time_cost", 0),
+                        "tool_name": tool_name,
+                        "tool_label": tool_label,
+                        "tool_input": tool_input,
+                        "tool_output": tool_output,
+                        "tool_parameters": tool_meta_data.get("tool_parameters", {}),
+                        "tool_icon": tool_icon,
+                    }
+                )
 
-            result['iterations'].append({
-                'tokens': agent_thought.tokens,
-                'tool_calls': tool_calls,
-                'tool_raw': {
-                    'inputs': agent_thought.tool_input,
-                    'outputs': agent_thought.observation,
-                },
-                'thought': agent_thought.thought,
-                'created_at': agent_thought.created_at.isoformat(),
-                'files': agent_thought.files,
-            })
+            result["iterations"].append(
+                {
+                    "tokens": agent_thought.tokens,
+                    "tool_calls": tool_calls,
+                    "tool_raw": {
+                        "inputs": agent_thought.tool_input,
+                        "outputs": agent_thought.observation,
+                    },
+                    "thought": agent_thought.thought,
+                    "created_at": agent_thought.created_at.isoformat(),
+                    "files": agent_thought.files,
+                }
+            )
 
         return result
+
+    @classmethod
+    def list_agent_providers(cls, user_id: str, tenant_id: str) -> list[PluginAgentProviderEntity]:
+        """
+        List agent providers
+        """
+        manager = PluginAgentClient()
+        return manager.fetch_agent_strategy_providers(tenant_id)
+
+    @classmethod
+    def get_agent_provider(cls, user_id: str, tenant_id: str, provider_name: str) -> PluginAgentProviderEntity:
+        """
+        Get agent provider
+        """
+        manager = PluginAgentClient()
+        try:
+            return manager.fetch_agent_strategy_provider(tenant_id, provider_name)
+        except PluginDaemonClientSideError as e:
+            raise ValueError(str(e)) from e

@@ -1,96 +1,178 @@
 'use client'
-import React, { useState } from 'react'
-import cn from 'classnames'
+import type { AppDetailWithSite, CopyAppPayload } from '@dify/contracts/api/console/apps/types.gen'
+import type { IconPickerInputValue, IconPickerValue } from '@/app/components/base/icon-picker'
+import { Button } from '@langgenius/dify-ui/button'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogHeaderCloseButton,
+  DialogTitle,
+} from '@langgenius/dify-ui/dialog'
+import { Field } from '@langgenius/dify-ui/field'
+import { Fieldset, FieldsetLegend } from '@langgenius/dify-ui/fieldset'
+import { Input } from '@langgenius/dify-ui/input'
+import { useQuery } from '@tanstack/react-query'
+import { useAtomValue } from 'jotai'
+import * as React from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import s from './style.module.css'
-import Modal from '@/app/components/base/modal'
-import Button from '@/app/components/base/button'
-import Toast from '@/app/components/base/toast'
-import AppIcon from '@/app/components/base/app-icon'
-import EmojiPicker from '@/app/components/base/emoji-picker'
-import { useProviderContext } from '@/context/provider-context'
+import {
+  IconPicker,
+  IconPickerContent,
+  IconPickerIcon,
+  IconPickerTrigger,
+} from '@/app/components/base/icon-picker'
 import AppsFull from '@/app/components/billing/apps-full-in-dialog'
+import { toast } from '@/app/notifications'
+import { deploymentEditionAtom } from '@/features/system-features/state'
+import { consoleQuery } from '@/service/console'
+
 export type DuplicateAppModalProps = {
   appName: string
-  icon: string
-  icon_background: string
+  icon_type: AppDetailWithSite['icon_type']
+  icon: AppDetailWithSite['icon']
+  icon_background?: string | null
+  icon_url?: string | null
   show: boolean
-  onConfirm: (info: {
-    name: string
-    icon: string
-    icon_background: string
-  }) => Promise<void>
+  onConfirm: (info: CopyAppPayload) => Promise<void>
   onHide: () => void
 }
 
 const DuplicateAppModal = ({
   appName,
+  icon_type,
   icon,
   icon_background,
+  icon_url,
   show = false,
   onConfirm,
   onHide,
 }: DuplicateAppModalProps) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['app', 'common', 'explore'])
 
   const [name, setName] = React.useState(appName)
 
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
-  const [emoji, setEmoji] = useState({ icon, icon_background })
+  const [selectedIcon, setSelectedIcon] = useState<IconPickerValue | null>(null)
+  const pickerValue: IconPickerInputValue | undefined =
+    selectedIcon ??
+    (icon_type === 'image' && icon
+      ? { type: 'image', url: icon_url ?? '', fileId: icon }
+      : icon_type === 'emoji' && icon
+        ? { type: 'emoji', icon, background: icon_background }
+        : icon_type === 'link' && icon
+          ? { type: 'link', url: icon }
+          : undefined)
+  const currentIcon = selectedIcon
+    ? {
+        icon_type: selectedIcon.type,
+        icon: selectedIcon.type === 'emoji' ? selectedIcon.icon : selectedIcon.fileId,
+        icon_background: selectedIcon.type === 'emoji' ? selectedIcon.background : undefined,
+        icon_url: selectedIcon.type === 'image' ? selectedIcon.url : undefined,
+      }
+    : { icon_type, icon, icon_background, icon_url }
 
-  const { plan, enableBilling } = useProviderContext()
-  const isAppsFull = (enableBilling && plan.usage.buildApps >= plan.total.buildApps)
+  const deploymentEdition = useAtomValue(deploymentEditionAtom)
+  const { data: appQuota } = useQuery(
+    consoleQuery.features.get.queryOptions({
+      enabled: deploymentEdition === 'CLOUD',
+      select: (data) => data.apps,
+    }),
+  )
+  const isAppQuotaUnavailable = deploymentEdition === 'CLOUD' && appQuota === undefined
+  // A limit of 0 means unlimited.
+  const isAppsFull =
+    deploymentEdition === 'CLOUD' &&
+    appQuota !== undefined &&
+    appQuota.limit > 0 &&
+    appQuota.size >= appQuota.limit
 
   const submit = () => {
+    if (isAppQuotaUnavailable || isAppsFull) return
+
     if (!name.trim()) {
-      Toast.notify({ type: 'error', message: t('explore.appCustomize.nameRequired') })
+      toast.error(t(($) => $['appCustomize.nameRequired'], { ns: 'explore' }))
       return
     }
     onConfirm({
       name,
-      ...emoji,
+      icon_type: currentIcon.icon_type,
+      icon: currentIcon.icon,
+      icon_background: currentIcon.icon_background,
     })
     onHide()
   }
 
   return (
     <>
-      <Modal
-        isShow={show}
-        onClose={() => { }}
-        className={cn(s.modal, '!max-w-[480px]', 'px-8')}
+      <Dialog
+        open={show}
+        onOpenChange={(open) => {
+          if (!open) onHide()
+        }}
       >
-        <span className={s.close} onClick={onHide} />
-        <div className={s.title}>{t('app.duplicateTitle')}</div>
-        <div className={s.content}>
-          <div className={s.subTitle}>{t('explore.appCustomize.subTitle')}</div>
-          <div className='flex items-center justify-between space-x-2'>
-            <AppIcon size='large' onClick={() => { setShowEmojiPicker(true) }} className='cursor-pointer' icon={emoji.icon} background={emoji.icon_background} />
-            <input
-              value={name}
-              onChange={e => setName(e.target.value)}
-              className='h-10 px-3 text-sm font-normal bg-gray-100 rounded-lg grow'
+        <DialogContent className="w-120">
+          <DialogHeader>
+            <DialogTitle>{t(($) => $.duplicateTitle, { ns: 'app' })}</DialogTitle>
+            <DialogHeaderCloseButton
+              aria-label={t(($) => $['operation.close'], { ns: 'common' })}
             />
-          </div>
-          {isAppsFull && <AppsFull loc='app-duplicate-create' />}
-        </div>
-        <div className='flex flex-row-reverse'>
-          <Button disabled={isAppsFull} className='w-24 ml-2' type='primary' onClick={submit}>{t('app.duplicate')}</Button>
-          <Button className='w-24' onClick={onHide}>{t('common.operation.cancel')}</Button>
-        </div>
-      </Modal>
-      {showEmojiPicker && <EmojiPicker
-        onSelect={(icon, icon_background) => {
-          setEmoji({ icon, icon_background })
-          setShowEmojiPicker(false)
-        }}
-        onClose={() => {
-          setEmoji({ icon, icon_background })
-          setShowEmojiPicker(false)
-        }}
-      />}
+          </DialogHeader>
+          <form
+            className="contents"
+            onSubmit={(event) => {
+              event.preventDefault()
+              submit()
+            }}
+          >
+            <DialogBody>
+              <Fieldset>
+                <FieldsetLegend className="system-md-medium">
+                  {t(($) => $['appCustomize.subTitle'], { ns: 'explore' })}
+                </FieldsetLegend>
+                <div className="flex items-center justify-between space-x-2">
+                  <IconPicker value={pickerValue} onValueChange={setSelectedIcon}>
+                    <IconPickerTrigger
+                      aria-label={t(($) => $['iconPicker.title'], { ns: 'app' })}
+                      className="shrink-0 cursor-pointer rounded-[10px]"
+                    >
+                      <IconPickerIcon size="large" />
+                    </IconPickerTrigger>
+                    <IconPickerContent />
+                  </IconPicker>
+                  <Field name="name" className="grow">
+                    <Input
+                      aria-label={t(($) => $['newApp.name'], { ns: 'app' })}
+                      autoComplete="off"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="h-10"
+                      placeholder={t(($) => $['placeholder.input'], { ns: 'common' })}
+                    />
+                  </Field>
+                </div>
+              </Fieldset>
+              {isAppsFull && <AppsFull className="mt-4" loc="app-duplicate-create" />}
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" className="w-24" onClick={onHide}>
+                {t(($) => $['operation.cancel'], { ns: 'common' })}
+              </Button>
+              <Button
+                type="submit"
+                disabled={isAppQuotaUnavailable || isAppsFull}
+                className="w-24"
+                variant="primary"
+              >
+                {t(($) => $.duplicate, { ns: 'app' })}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </>
-
   )
 }
 

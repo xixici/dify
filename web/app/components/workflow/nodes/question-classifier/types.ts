@@ -1,9 +1,11 @@
-import type { CommonNodeType, Memory, ModelConfig, ValueSelector } from '@/app/components/workflow/types'
-
-export type Topic = {
-  id: string
-  name: string
-}
+import type { Topic } from '../_base/components/branch-list/types'
+import type {
+  CommonNodeType,
+  Memory,
+  ModelConfig,
+  ValueSelector,
+  VisionSetting,
+} from '@/app/components/workflow/types'
 
 export type QuestionClassifierNodeType = CommonNodeType & {
   query_variable_selector: ValueSelector
@@ -11,4 +13,8 @@ export type QuestionClassifierNodeType = CommonNodeType & {
   classes: Topic[]
   instruction: string
   memory?: Memory
+  vision: {
+    enabled: boolean
+    configs?: VisionSetting
+  }
 }

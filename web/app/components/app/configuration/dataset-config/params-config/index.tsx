@@ -1,107 +1,154 @@
 'use client'
-import type { FC } from 'react'
-import { memo, useState } from 'react'
+import type { DatasetDetailWithPartialMembersResponse } from '@dify/contracts/api/console/datasets/types.gen'
+import type { DatasetConfigs } from '@/models/debug'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Dialog, DialogContent } from '@langgenius/dify-ui/dialog'
+import { RiEqualizer2Line } from '@remixicon/react'
+import { memo, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useContext } from 'use-context-selector'
-import cn from 'classnames'
-import ConfigContent from './config-content'
-import { Settings04 } from '@/app/components/base/icons/src/vender/line/general'
-import ConfigContext from '@/context/debug-configuration'
-import Modal from '@/app/components/base/modal'
-import Button from '@/app/components/base/button'
-import { RETRIEVE_TYPE } from '@/types/app'
-import Toast from '@/app/components/base/toast'
-import { DATASET_DEFAULT } from '@/config'
-import { useModelListAndDefaultModelAndCurrentProviderAndModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import { toast } from '@/app/components/app/configuration/toast'
 import { ModelTypeEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import {
+  useCurrentProviderAndModel,
+  useModelListAndDefaultModelAndCurrentProviderAndModel,
+} from '@/app/components/header/account-setting/model-provider-page/hooks'
+import { getMultipleRetrievalConfig } from '@/app/components/workflow/nodes/knowledge-retrieval/utils'
+import ConfigContext from '@/context/debug-configuration'
+import { RerankingModeEnum } from '@/models/datasets'
+import { RETRIEVE_TYPE } from '@/types/app'
+import ConfigContent from './config-content'
 
-const ParamsConfig: FC = () => {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-  const {
-    datasetConfigs,
-    setDatasetConfigs,
-  } = useContext(ConfigContext)
+type ParamsConfigProps = {
+  disabled?: boolean
+  selectedDatasets: DatasetDetailWithPartialMembersResponse[]
+}
+const ParamsConfig = ({ disabled, selectedDatasets }: ParamsConfigProps) => {
+  const { t } = useTranslation(['appDebug', 'common', 'dataset'])
+  const { datasetConfigs, setDatasetConfigs, rerankSettingModalOpen, setRerankSettingModalOpen } =
+    useContext(ConfigContext)
   const [tempDataSetConfigs, setTempDataSetConfigs] = useState(datasetConfigs)
 
+  useEffect(() => {
+    setTempDataSetConfigs(datasetConfigs)
+  }, [datasetConfigs])
+
   const {
-    defaultModel: rerankDefaultModel,
-    currentModel: isRerankDefaultModelVaild,
+    modelList: rerankModelList,
+    currentModel: rerankDefaultModel,
+    currentProvider: rerankDefaultProvider,
   } = useModelListAndDefaultModelAndCurrentProviderAndModel(ModelTypeEnum.rerank)
+
+  const { currentModel: isCurrentRerankModelValid } = useCurrentProviderAndModel(rerankModelList, {
+    provider: tempDataSetConfigs.reranking_model?.reranking_provider_name ?? '',
+    model: tempDataSetConfigs.reranking_model?.reranking_model_name ?? '',
+  })
 
   const isValid = () => {
     let errMsg = ''
     if (tempDataSetConfigs.retrieval_model === RETRIEVE_TYPE.multiWay) {
-      if (!tempDataSetConfigs.reranking_model?.reranking_model_name && (!rerankDefaultModel && isRerankDefaultModelVaild))
-        errMsg = t('appDebug.datasetConfig.rerankModelRequired')
+      if (
+        tempDataSetConfigs.reranking_enable &&
+        tempDataSetConfigs.reranking_mode === RerankingModeEnum.RerankingModel &&
+        !isCurrentRerankModelValid
+      ) {
+        errMsg = t(($) => $['datasetConfig.rerankModelRequired'], { ns: 'appDebug' })
+      }
     }
     if (errMsg) {
-      Toast.notify({
-        type: 'error',
-        message: errMsg,
-      })
+      toast.error(errMsg)
     }
     return !errMsg
   }
   const handleSave = () => {
-    if (!isValid())
-      return
+    if (!isValid()) return
+    setDatasetConfigs(tempDataSetConfigs)
+    setRerankSettingModalOpen(false)
+  }
 
-    const config = { ...tempDataSetConfigs }
-    if (config.retrieval_model === RETRIEVE_TYPE.multiWay && !config.reranking_model) {
-      config.reranking_model = {
-        reranking_provider_name: rerankDefaultModel?.provider?.provider,
-        reranking_model_name: rerankDefaultModel?.model,
-      } as any
-    }
-    setDatasetConfigs(config)
-    setOpen(false)
+  const handleSetTempDataSetConfigs = (newDatasetConfigs: DatasetConfigs) => {
+    const { datasets, retrieval_model, score_threshold_enabled, ...restConfigs } = newDatasetConfigs
+
+    const retrievalConfig = getMultipleRetrievalConfig(
+      {
+        top_k: restConfigs.top_k,
+        score_threshold: restConfigs.score_threshold,
+        reranking_model: restConfigs.reranking_model && {
+          provider: restConfigs.reranking_model.reranking_provider_name,
+          model: restConfigs.reranking_model.reranking_model_name,
+        },
+        reranking_mode: restConfigs.reranking_mode,
+        weights: restConfigs.weights,
+        reranking_enable: restConfigs.reranking_enable,
+      },
+      selectedDatasets,
+      selectedDatasets,
+      {
+        provider: rerankDefaultProvider?.provider,
+        model: rerankDefaultModel?.model,
+      },
+    )
+
+    setTempDataSetConfigs({
+      ...retrievalConfig,
+      reranking_model: {
+        reranking_provider_name: retrievalConfig.reranking_model?.provider || '',
+        reranking_model_name: retrievalConfig.reranking_model?.model || '',
+      },
+      retrieval_model,
+      score_threshold_enabled,
+      datasets,
+    })
   }
 
   return (
     <div>
-      <div
-        className={cn('flex items-center rounded-md h-7 px-3 space-x-1 text-gray-700 cursor-pointer hover:bg-gray-200', open && 'bg-gray-200')}
+      <Button
+        variant="ghost"
+        size="small"
+        className={cn('h-7', rerankSettingModalOpen && 'bg-components-button-ghost-bg-hover')}
         onClick={() => {
-          setTempDataSetConfigs({
-            ...datasetConfigs,
-            top_k: datasetConfigs.top_k || DATASET_DEFAULT.top_k,
-            score_threshold: datasetConfigs.score_threshold || DATASET_DEFAULT.score_threshold,
-          })
-          setOpen(true)
+          setRerankSettingModalOpen(true)
         }}
+        disabled={disabled}
       >
-        <Settings04 className="w-[14px] h-[14px]" />
-        <div className='text-xs font-medium'>
-          {t('appDebug.datasetConfig.params')}
-        </div>
-      </div>
-      {
-        open && (
-          <Modal
-            isShow={open}
-            onClose={() => {
-              setOpen(false)
-            }}
-            className='sm:min-w-[528px]'
-            wrapperClassName='z-50'
-            title={t('appDebug.datasetConfig.settingTitle')}
-          >
+        <RiEqualizer2Line className="size-3.5" />
+        {t(($) => $.retrievalSettings, { ns: 'dataset' })}
+      </Button>
+      {rerankSettingModalOpen && (
+        <Dialog
+          open={rerankSettingModalOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setRerankSettingModalOpen(false)
+            }
+          }}
+        >
+          <DialogContent className="w-120 p-6 sm:w-132">
             <ConfigContent
               datasetConfigs={tempDataSetConfigs}
-              onChange={setTempDataSetConfigs}
+              onChange={handleSetTempDataSetConfigs}
+              selectedDatasets={selectedDatasets}
             />
 
-            <div className='mt-6 flex justify-end'>
-              <Button className='mr-2 flex-shrink-0' onClick={() => {
-                setOpen(false)
-              }}>{t('common.operation.cancel')}</Button>
-              <Button type='primary' className='flex-shrink-0' onClick={handleSave} >{t('common.operation.save')}</Button>
+            <div className="mt-6 flex justify-end">
+              <Button
+                className="me-2 shrink-0"
+                onClick={() => {
+                  setTempDataSetConfigs(datasetConfigs)
+                  setRerankSettingModalOpen(false)
+                }}
+              >
+                {t(($) => $['operation.cancel'], { ns: 'common' })}
+              </Button>
+              <Button variant="primary" className="shrink-0" onClick={handleSave}>
+                {t(($) => $['operation.save'], { ns: 'common' })}
+              </Button>
             </div>
-          </Modal>
-        )
-      }
-
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }

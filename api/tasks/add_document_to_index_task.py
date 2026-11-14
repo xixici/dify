@@ -1,78 +1,152 @@
-import datetime
 import logging
 import time
 
 import click
 from celery import shared_task
-from werkzeug.exceptions import NotFound
+from sqlalchemy import delete, select, update
 
-from core.rag.index_processor.index_processor_factory import IndexProcessorFactory
-from core.rag.models.document import Document
-from extensions.ext_database import db
+from core.db.session_factory import session_factory
+from core.rag.index_processor.constant.doc_type import DocType
+from core.rag.index_processor.constant.index_type import IndexStructureType
+from core.rag.index_processor.index_processor import IndexProcessorFactory
+from core.rag.models.document import AttachmentDocument, ChildDocument, Document
 from extensions.ext_redis import redis_client
+from libs.datetime_utils import naive_utc_now
+from models.dataset import DatasetAutoDisableLog, DocumentSegment
 from models.dataset import Document as DatasetDocument
-from models.dataset import DocumentSegment
+from models.enums import IndexingStatus, SegmentStatus
+from repositories.knowledge.dataset_read_repository import (
+    get_dataset_doc_form,
+    get_document_dataset,
+    get_segment_child_chunks,
+)
+from repositories.knowledge.segment_read_adapter import get_segment_attachments
+
+logger = logging.getLogger(__name__)
 
 
-@shared_task(queue='dataset')
+@shared_task(queue="dataset")
 def add_document_to_index_task(dataset_document_id: str):
     """
     Async Add document to index
-    :param document_id:
+    :param dataset_document_id:
 
-    Usage: add_document_to_index.delay(document_id)
+    Usage: add_document_to_index_task.delay(dataset_document_id)
     """
-    logging.info(click.style('Start add document to index: {}'.format(dataset_document_id), fg='green'))
+    logger.info(click.style(f"Start add document to index: {dataset_document_id}", fg="green"))
     start_at = time.perf_counter()
 
-    dataset_document = db.session.query(DatasetDocument).filter(DatasetDocument.id == dataset_document_id).first()
-    if not dataset_document:
-        raise NotFound('Document not found')
+    with session_factory.create_session() as session:
+        dataset_document = session.scalar(
+            select(DatasetDocument).where(DatasetDocument.id == dataset_document_id).limit(1)
+        )
+        if not dataset_document:
+            logger.info(click.style(f"Document not found: {dataset_document_id}", fg="red"))
+            return
 
-    if dataset_document.indexing_status != 'completed':
-        return
+        if dataset_document.indexing_status != IndexingStatus.COMPLETED:
+            return
 
-    indexing_cache_key = 'document_{}_indexing'.format(dataset_document.id)
+        indexing_cache_key = f"document_{dataset_document.id}_indexing"
 
-    try:
-        segments = db.session.query(DocumentSegment).filter(
-            DocumentSegment.document_id == dataset_document.id,
-            DocumentSegment.enabled == True
-        ) \
-            .order_by(DocumentSegment.position.asc()).all()
+        try:
+            dataset = get_document_dataset(dataset_document, session=session)
+            if not dataset:
+                raise Exception(f"Document {dataset_document.id} dataset {dataset_document.dataset_id} doesn't exist.")
 
-        documents = []
-        for segment in segments:
-            document = Document(
-                page_content=segment.content,
-                metadata={
-                    "doc_id": segment.index_node_id,
-                    "doc_hash": segment.index_node_hash,
-                    "document_id": segment.document_id,
-                    "dataset_id": segment.dataset_id,
-                }
+            segments = session.scalars(
+                select(DocumentSegment)
+                .where(
+                    DocumentSegment.document_id == dataset_document.id,
+                    DocumentSegment.status == SegmentStatus.COMPLETED,
+                )
+                .order_by(DocumentSegment.position.asc())
+            ).all()
+
+            documents = []
+            multimodal_documents = []
+            for segment in segments:
+                document = Document(
+                    page_content=segment.content,
+                    metadata={
+                        "doc_id": segment.index_node_id,
+                        "doc_hash": segment.index_node_hash,
+                        "document_id": segment.document_id,
+                        "dataset_id": segment.dataset_id,
+                    },
+                )
+                if dataset_document.doc_form == IndexStructureType.PARENT_CHILD_INDEX:
+                    child_chunks = get_segment_child_chunks(segment, session=session)
+                    if child_chunks:
+                        child_documents = []
+                        for child_chunk in child_chunks:
+                            child_document = ChildDocument(
+                                page_content=child_chunk.content,
+                                metadata={
+                                    "doc_id": child_chunk.index_node_id,
+                                    "doc_hash": child_chunk.index_node_hash,
+                                    "document_id": segment.document_id,
+                                    "dataset_id": segment.dataset_id,
+                                },
+                            )
+                            child_documents.append(child_document)
+                        document.children = child_documents
+                if dataset.is_multimodal:
+                    for attachment in get_segment_attachments(segment, session=session):
+                        multimodal_documents.append(
+                            AttachmentDocument(
+                                page_content=attachment["name"],
+                                metadata={
+                                    "doc_id": attachment["id"],
+                                    "doc_hash": "",
+                                    "document_id": segment.document_id,
+                                    "dataset_id": segment.dataset_id,
+                                    "doc_type": DocType.IMAGE,
+                                },
+                            )
+                        )
+                documents.append(document)
+
+            index_type = get_dataset_doc_form(dataset, session=session)
+            index_processor = IndexProcessorFactory(index_type).init_index_processor()
+            index_processor.load(dataset, documents, multimodal_documents=multimodal_documents, session=session)
+
+            # delete auto disable log
+            session.execute(
+                delete(DatasetAutoDisableLog).where(DatasetAutoDisableLog.document_id == dataset_document.id)
             )
 
-            documents.append(document)
+            # update segment to enable
+            session.execute(
+                update(DocumentSegment)
+                .where(DocumentSegment.document_id == dataset_document.id)
+                .values(enabled=True, disabled_at=None, disabled_by=None, updated_at=naive_utc_now())
+            )
+            session.commit()
 
-        dataset = dataset_document.dataset
+            # Enable summary indexes for all segments in this document
+            from services.knowledge.summaries.adapters import SummaryIndexAdapter
 
-        if not dataset:
-            raise Exception('Document has no dataset')
+            segment_ids_list = [segment.id for segment in segments]
+            if segment_ids_list:
+                try:
+                    SummaryIndexAdapter.enable_summaries_for_segments(
+                        dataset=dataset,
+                        segment_ids=segment_ids_list,
+                    )
+                except Exception:
+                    logger.warning("Failed to enable summaries for document %s", dataset_document.id, exc_info=True)
 
-        index_type = dataset.doc_form
-        index_processor = IndexProcessorFactory(index_type).init_index_processor()
-        index_processor.load(dataset, documents)
-
-        end_at = time.perf_counter()
-        logging.info(
-            click.style('Document added to index: {} latency: {}'.format(dataset_document.id, end_at - start_at), fg='green'))
-    except Exception as e:
-        logging.exception("add document to index failed")
-        dataset_document.enabled = False
-        dataset_document.disabled_at = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
-        dataset_document.status = 'error'
-        dataset_document.error = str(e)
-        db.session.commit()
-    finally:
-        redis_client.delete(indexing_cache_key)
+            end_at = time.perf_counter()
+            logger.info(
+                click.style(f"Document added to index: {dataset_document.id} latency: {end_at - start_at}", fg="green")
+            )
+        except Exception as e:
+            logger.exception("add document to index failed")
+            dataset_document.enabled = False
+            dataset_document.disabled_at = naive_utc_now()
+            dataset_document.indexing_status = IndexingStatus.ERROR
+            dataset_document.error = str(e)
+            session.commit()
+        finally:
+            redis_client.delete(indexing_cache_key)

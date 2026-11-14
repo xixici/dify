@@ -1,49 +1,63 @@
-import os
+from typing import Literal
 
-from flask import current_app, session
-from flask_restful import Resource, reqparse
+from flask import session
+from pydantic import BaseModel, Field
 
-from libs.helper import str_len
-from models.model import DifySetup
-from services.account_service import TenantService
+from controllers.fastopenapi import console_router
+from extensions.ext_application_services import application_services
+from services.init_validation_service import AlreadyInitializedError, InvalidInitializationPasswordError
 
-from . import api
 from .error import AlreadySetupError, InitValidateFailedError
 from .wraps import only_edition_self_hosted
 
 
-class InitValidateAPI(Resource):
+class InitValidatePayload(BaseModel):
+    password: str = Field(..., max_length=30, description="Initialization password")
 
-    def get(self):
-        init_status = get_init_validate_status()
-        if init_status:
-            return { 'status': 'finished' }
-        return {'status': 'not_started' }
 
-    @only_edition_self_hosted
-    def post(self):
-        # is tenant created
-        tenant_count = TenantService.get_tenant_count()
-        if tenant_count > 0:
-            raise AlreadySetupError()
+class InitStatusResponse(BaseModel):
+    status: Literal["finished", "not_started"] = Field(..., description="Initialization status")
 
-        parser = reqparse.RequestParser()
-        parser.add_argument('password', type=str_len(30),
-                            required=True, location='json')
-        input_password = parser.parse_args()['password']
 
-        if input_password != os.environ.get('INIT_PASSWORD'):
-            session['is_init_validated'] = False
-            raise InitValidateFailedError()
-            
-        session['is_init_validated'] = True
-        return {'result': 'success'}, 201
+class InitValidateResponse(BaseModel):
+    result: str = Field(description="Operation result", examples=["success"])
 
-def get_init_validate_status():
-    if current_app.config['EDITION'] == 'SELF_HOSTED':
-        if os.environ.get('INIT_PASSWORD'):
-            return session.get('is_init_validated') or DifySetup.query.first()
-    
-    return True
 
-api.add_resource(InitValidateAPI, '/init')
+@console_router.get(
+    "/init",
+    response_model=InitStatusResponse,
+    tags=["console"],
+)
+def get_init_status() -> InitStatusResponse:
+    """Get initialization validation status."""
+    init_status = is_init_validated()
+    if init_status:
+        return InitStatusResponse(status="finished")
+    return InitStatusResponse(status="not_started")
+
+
+@console_router.post(
+    "/init",
+    response_model=InitValidateResponse,
+    tags=["console"],
+    status_code=201,
+)
+@only_edition_self_hosted
+def validate_init_password(payload: InitValidatePayload) -> InitValidateResponse:
+    """Validate initialization password."""
+    try:
+        application_services().init_validation.validate_password(payload.password)
+    except AlreadyInitializedError:
+        raise AlreadySetupError() from None
+    except InvalidInitializationPasswordError:
+        session["is_init_validated"] = False
+        raise InitValidateFailedError() from None
+
+    session["is_init_validated"] = True
+    return InitValidateResponse(result="success")
+
+
+def is_init_validated() -> bool:
+    return application_services().init_validation.is_validated(
+        session_validated=bool(session.get("is_init_validated")),
+    )

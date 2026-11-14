@@ -1,83 +1,168 @@
 'use client'
+import type { DatasetDetailWithPartialMembersResponse } from '@dify/contracts/api/console/datasets/types.gen'
+import type { DrawerActions } from '@langgenius/dify-ui/drawer'
 import type { FC } from 'react'
-import React, { useCallback } from 'react'
-import { useBoolean } from 'ahooks'
-import type { DataSet } from '@/models/datasets'
-import { DataSourceType } from '@/models/datasets'
-import { Settings01, Trash03 } from '@/app/components/base/icons/src/vender/line/general'
-import FileIcon from '@/app/components/base/file-icon'
-import { Folder } from '@/app/components/base/icons/src/vender/solid/files'
+import { cn } from '@langgenius/dify-ui/cn'
+import {
+  Drawer,
+  DrawerBackdrop,
+  DrawerContent,
+  DrawerPopup,
+  DrawerPortal,
+  DrawerTrigger,
+  DrawerViewport,
+} from '@langgenius/dify-ui/drawer'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import * as React from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import SettingsModal from '@/app/components/app/configuration/dataset-config/settings-modal'
-import Drawer from '@/app/components/base/drawer'
-import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
+import AppIcon from '@/app/components/base/app-icon'
+import Badge from '@/app/components/base/badge'
+import { ModelFeatureEnum } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import FeatureIcon from '@/app/components/header/account-setting/model-provider-page/model-selector/feature-icon'
+import { useKnowledge } from '@/hooks/use-knowledge'
 
-type Props = {
-  payload: DataSet
+type Props = Readonly<{
+  payload: DatasetDetailWithPartialMembersResponse
   onRemove: () => void
-  onChange: (dataSet: DataSet) => void
+  onChange: (dataSet: DatasetDetailWithPartialMembersResponse) => void
   readonly?: boolean
-}
+  editable?: boolean
+  settingsDrawerBackdropClassName?: string
+  settingsDrawerBackdropForceRender?: boolean
+  settingsDrawerPopupClassName?: string
+  settingsModalHeight?: string
+}>
 
 const DatasetItem: FC<Props> = ({
   payload,
   onRemove,
   onChange,
   readonly,
+  editable = true,
+  settingsDrawerBackdropClassName,
+  settingsDrawerBackdropForceRender,
+  settingsDrawerPopupClassName,
+  settingsModalHeight,
 }) => {
-  const media = useBreakpoints()
-  const isMobile = media === MediaType.mobile
+  const { t } = useTranslation(['common', 'dataset'])
+  const { formatIndexingTechniqueAndMethod } = useKnowledge()
+  const [isDeleteHovered, setIsDeleteHovered] = useState(false)
 
-  const [isShowSettingsModal, {
-    setTrue: showSettingsModal,
-    setFalse: hideSettingsModal,
-  }] = useBoolean(false)
+  const settingsDrawerActionsRef = useRef<DrawerActions>(null)
 
-  const handleSave = useCallback((newDataset: DataSet) => {
-    onChange(newDataset)
-    hideSettingsModal()
-  }, [hideSettingsModal, onChange])
+  const handleSave = useCallback(
+    (newDataset: DatasetDetailWithPartialMembersResponse) => {
+      onChange(newDataset)
+      settingsDrawerActionsRef.current?.close()
+    },
+    [onChange],
+  )
+
+  const handleRemove = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation()
+      onRemove()
+    },
+    [onRemove],
+  )
+
+  const iconInfo = payload.icon_info || {
+    icon: '📙',
+    icon_type: 'emoji',
+    icon_background: '#FFF4ED',
+    icon_url: '',
+  }
 
   return (
-    <div className='flex items-center h-10 justify-between rounded-xl px-2 bg-white border border-gray-200  cursor-pointer group/dataset-item'>
-      <div className='w-0 grow flex items-center space-x-1.5'>
-        {
-          payload.data_source_type === DataSourceType.NOTION
-            ? (
-              <div className='shrink-0 flex items-center justify-center w-6 h-6 rounded-md border-[0.5px] border-[#EAECF5]'>
-                <FileIcon type='notion' className='w-4 h-4' />
-              </div>
-            )
-            : <div className='shrink-0 flex items-center justify-center w-6 h-6 bg-[#F5F8FF] rounded-md border-[0.5px] border-[#E0EAFF]'>
-              <Folder className='w-4 h-4 text-[#444CE7]' />
-            </div>
-        }
-        <div className='w-0 grow text-[13px] font-normal text-gray-800 truncate'>{payload.name}</div>
+    <div
+      className={`group/dataset-item flex h-10 cursor-pointer items-center justify-between rounded-lg border-[0.5px] border-components-panel-border-subtle px-2 ${
+        isDeleteHovered
+          ? 'border-state-destructive-border bg-state-destructive-hover'
+          : 'bg-components-panel-on-panel-item-bg hover:bg-components-panel-on-panel-item-bg-hover'
+      }`}
+    >
+      <div className="flex w-0 grow items-center space-x-1.5">
+        <AppIcon size="tiny" icon={iconInfo} />
+        <div className="w-0 grow truncate system-sm-medium text-text-secondary">{payload.name}</div>
       </div>
       {!readonly && (
-        <div className='hidden group-hover/dataset-item:flex shrink-0 ml-2  items-center space-x-1'>
-          <div
-            className='flex items-center justify-center w-6 h-6 hover:bg-black/5 rounded-md cursor-pointer'
-            onClick={showSettingsModal}
+        <div className="ms-2 hidden shrink-0 items-center space-x-1 group-hover/dataset-item:flex">
+          {editable && (
+            <Drawer actionsRef={settingsDrawerActionsRef} modal swipeDirection="right">
+              <DrawerTrigger
+                render={
+                  <IconButton
+                    aria-label={t(($) => $['operation.edit'], { ns: 'common' })}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span
+                      aria-hidden
+                      className="i-ri-edit-line size-4 shrink-0 text-text-tertiary"
+                    />
+                  </IconButton>
+                }
+              />
+              <DrawerPortal>
+                <DrawerBackdrop
+                  forceRender={settingsDrawerBackdropForceRender}
+                  className={cn(
+                    !settingsDrawerBackdropClassName && 'sm:bg-transparent',
+                    settingsDrawerBackdropClassName,
+                  )}
+                />
+                <DrawerViewport>
+                  <DrawerPopup
+                    className={cn(
+                      'p-0! data-[swipe-direction=right]:right-2 data-[swipe-direction=right]:h-auto data-[swipe-direction=right]:w-full data-[swipe-direction=right]:max-w-160 data-[swipe-direction=right]:rounded-xl',
+                      settingsDrawerPopupClassName ??
+                        'data-[swipe-direction=right]:top-16 data-[swipe-direction=right]:bottom-3',
+                    )}
+                  >
+                    <DrawerContent className="h-full">
+                      <SettingsModal
+                        currentDataset={payload}
+                        height={settingsModalHeight}
+                        onCancel={() => settingsDrawerActionsRef.current?.close()}
+                        onSave={handleSave}
+                      />
+                    </DrawerContent>
+                  </DrawerPopup>
+                </DrawerViewport>
+              </DrawerPortal>
+            </Drawer>
+          )}
+          <IconButton
+            aria-label={t(($) => $['operation.remove'], { ns: 'common' })}
+            onClick={handleRemove}
+            tone="destructive"
+            onMouseEnter={() => setIsDeleteHovered(true)}
+            onMouseLeave={() => setIsDeleteHovered(false)}
           >
-            <Settings01 className='w-4 h-4 text-gray-500' />
-          </div>
-          <div
-            className='flex items-center justify-center w-6 h-6 hover:bg-black/5 rounded-md cursor-pointer'
-            onClick={onRemove}
-          >
-            <Trash03 className='w-4 h-4 text-gray-500' />
-          </div>
+            <span aria-hidden className="i-ri-delete-bin-line size-4 shrink-0" />
+          </IconButton>
         </div>
       )}
-
-      {isShowSettingsModal && (
-        <Drawer isOpen={isShowSettingsModal} onClose={hideSettingsModal} footer={null} mask={isMobile} panelClassname='mt-16 mx-2 sm:mr-2 mb-3 !p-0 !max-w-[640px] rounded-xl'>
-          <SettingsModal
-            currentDataset={payload}
-            onCancel={hideSettingsModal}
-            onSave={handleSave}
-          />
-        </Drawer>
+      {payload.is_multimodal && (
+        <div className="me-1 shrink-0 group-hover/dataset-item:hidden">
+          <FeatureIcon feature={ModelFeatureEnum.vision} />
+        </div>
+      )}
+      {!!payload.indexing_technique && (
+        <Badge
+          className="shrink-0 group-hover/dataset-item:hidden"
+          text={formatIndexingTechniqueAndMethod(
+            payload.indexing_technique,
+            payload.retrieval_model_dict?.search_method,
+          )}
+        />
+      )}
+      {payload.provider === 'external' && (
+        <Badge
+          className="shrink-0 group-hover/dataset-item:hidden"
+          text={t(($) => $.externalTag, { ns: 'dataset' })}
+        />
       )}
     </div>
   )

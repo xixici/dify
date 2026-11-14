@@ -1,49 +1,71 @@
-import type {
-  FC,
-  ReactNode,
-} from 'react'
-import { memo, useEffect, useRef, useState } from 'react'
+import type { FC, ReactNode } from 'react'
+import type { ChatConfig, ChatItem } from '../../types'
+import type { HumanInputFormSubmitData } from './human-input-content/type'
+import type { AnswerActionPosition } from './operation'
+import type { AppData } from '@/models/share'
+import { cn } from '@langgenius/dify-ui/cn'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import type {
-  ChatConfig,
-  ChatItem,
-} from '../../types'
-import Operation from './operation'
+import { EditTitle } from '@/app/components/app/annotation/edit-annotation-modal/edit-item'
+import AnswerIcon from '@/app/components/base/answer-icon'
+import Citation from '@/app/components/base/chat/chat/citation'
+import LoadingAnim from '@/app/components/base/chat/chat/loading-anim'
+import { FileList } from '@/app/components/base/file-uploader'
+import ContentSwitch from '../content-switch'
+import { useChatContext } from '../context'
 import AgentContent from './agent-content'
 import BasicContent from './basic-content'
-import SuggestedQuestions from './suggested-questions'
+import HumanInputFilledFormList from './human-input-filled-form-list'
+import HumanInputFormList from './human-input-form-list'
 import More from './more'
-import WorkflowProcess from './workflow-process'
-import { AnswerTriangle } from '@/app/components/base/icons/src/vender/solid/general'
-import { MessageFast } from '@/app/components/base/icons/src/vender/solid/communication'
-import LoadingAnim from '@/app/components/app/chat/loading-anim'
-import Citation from '@/app/components/app/chat/citation'
-import { EditTitle } from '@/app/components/app/annotation/edit-annotation-modal/edit-item'
-import type { Emoji } from '@/app/components/tools/types'
+import Operation from './operation'
+import ReasoningPanel from './reasoning-panel'
+import SuggestedQuestions from './suggested-questions'
+import WorkflowProcessItem from './workflow-process'
+import WorkflowToolActivity from './workflow-tool-activity'
 
 type AnswerProps = {
+  footer?: ReactNode
+  answerActionPosition?: AnswerActionPosition
   item: ChatItem
   question: string
   index: number
   config?: ChatConfig
   answerIcon?: ReactNode
   responding?: boolean
-  allToolIcons?: Record<string, string | Emoji>
-  showPromptLog?: boolean
   chatAnswerContainerInner?: string
+  hideProcessDetail?: boolean
+  appData?: AppData
+  noChatInput?: boolean
+  switchSibling?: (siblingMessageId: string) => void
+  hideAvatar?: boolean
+  renderAgentContent?: (props: {
+    item: ChatItem
+    responding?: boolean
+    content?: string
+    showThoughts?: boolean
+  }) => ReactNode
+  onHumanInputFormSubmit?: (formToken: string, formData: HumanInputFormSubmitData) => Promise<void>
 }
 const Answer: FC<AnswerProps> = ({
+  footer,
+  answerActionPosition,
   item,
   question,
   index,
   config,
   answerIcon,
   responding,
-  allToolIcons,
-  showPromptLog,
   chatAnswerContainerInner,
+  hideProcessDetail,
+  appData,
+  noChatInput,
+  switchSibling,
+  hideAvatar,
+  renderAgentContent,
+  onHumanInputFormSubmit,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['appAnnotation', 'common'])
   const {
     content,
     citation,
@@ -51,125 +73,365 @@ const Answer: FC<AnswerProps> = ({
     more,
     annotation,
     workflowProcess,
+    allFiles,
+    message_files,
+    humanInputFormDataList,
+    humanInputFilledFormDataList,
   } = item
   const hasAgentThoughts = !!agent_thoughts?.length
+  const hasAgentResponseParts = !!item.agent_response_parts?.length
+  const hasAgentContent = hasAgentThoughts || hasAgentResponseParts
+  const hasHumanInputs = !!humanInputFormDataList?.length || !!humanInputFilledFormDataList?.length
+  const hasWorkflowActivities = !!item.workflowAgentActivities?.length
+  // Truthy only when there is real reasoning text. Rehydrated messages carry an empty
+  // `{}` (the field is always persisted), and `!!{}` would otherwise be truthy.
+  const hasReasoning = !!item.reasoningContent && Object.values(item.reasoningContent).some(Boolean)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [contentWidth, setContentWidth] = useState(0)
+  const [humanInputFormContainerWidth, setHumanInputFormContainerWidth] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const humanInputFormContainerRef = useRef<HTMLDivElement>(null)
+
+  const { getHumanInputNodeData } = useChatContext()
 
   const getContainerWidth = () => {
-    if (containerRef.current)
-      setContainerWidth(containerRef.current?.clientWidth + 16)
+    if (containerRef.current) setContainerWidth(containerRef.current?.clientWidth + 16)
   }
-  const getContentWidth = () => {
-    if (contentRef.current)
-      setContentWidth(contentRef.current?.clientWidth)
-  }
-
   useEffect(() => {
     getContainerWidth()
   }, [])
 
+  const getContentWidth = () => {
+    if (contentRef.current) setContentWidth(contentRef.current?.clientWidth)
+  }
+
   useEffect(() => {
-    if (!responding)
-      getContentWidth()
+    if (!responding) getContentWidth()
   }, [responding])
 
+  const getHumanInputFormContainerWidth = () => {
+    if (humanInputFormContainerRef.current)
+      setHumanInputFormContainerWidth(humanInputFormContainerRef.current?.clientWidth)
+  }
+
+  useEffect(() => {
+    if (hasHumanInputs) getHumanInputFormContainerWidth()
+  }, [hasHumanInputs])
+
+  // Recalculate contentWidth when content changes (e.g., SVG preview/source toggle)
+  useEffect(() => {
+    if (!containerRef.current) return
+    const resizeObserver = new ResizeObserver(() => {
+      getContentWidth()
+      getHumanInputFormContainerWidth()
+    })
+    resizeObserver.observe(containerRef.current)
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [])
+
+  const handleSwitchSibling = useCallback(
+    (direction: 'prev' | 'next') => {
+      if (direction === 'prev') {
+        if (item.prevSibling) switchSibling?.(item.prevSibling)
+      } else {
+        if (item.nextSibling) switchSibling?.(item.nextSibling)
+      }
+    },
+    [switchSibling, item.prevSibling, item.nextSibling],
+  )
+
+  const contentIsEmpty = typeof content === 'string' && content.trim() === ''
+  const agentContentNode = renderAgentContent ? (
+    renderAgentContent({
+      item,
+      responding,
+      content,
+      showThoughts: !!config?.show_thoughts?.enabled,
+    })
+  ) : (
+    <AgentContent item={item} responding={responding} content={content} />
+  )
+  // Reasoning is "done" — freeze the elapsed timer and collapse the panel — as soon as ANY of:
+  //  ① the answer has begun streaming (first text delta): the only signal that fires
+  //     mid-node, so it drives the normal think→answer handoff;
+  //  ② the reasoning stream's terminal marker arrived (a reasoning node that finishes
+  //     before a separate answer node starts);
+  //  ③ the response is no longer active — explicitly false, not merely absent (history / abnormal end).
+  // graphon's is_final (on BOTH the text and reasoning channels) is a node-terminal marker
+  // that trails the whole answer, so it can't drive ①; the answer-started signal must.
+  const reasoningDone = !contentIsEmpty || !!item.reasoningFinished || responding === false
+
   return (
-    <div className='flex mb-2 last:mb-0'>
-      <div className='shrink-0 relative w-10 h-10'>
-        {
-          answerIcon || (
-            <div className='flex items-center justify-center w-full h-full rounded-full bg-[#d5f5f6] border-[0.5px] border-black/5 text-xl'>
-              🤖
+    <div className="mb-2 flex last:mb-0">
+      {!hideAvatar && (
+        <div className="relative size-10 shrink-0">
+          {answerIcon || <AnswerIcon />}
+          {responding && (
+            <div className="absolute -inset-s-0.75 -top-0.75 flex h-4 w-4 items-center rounded-full border-[0.5px] border-divider-subtle bg-background-section-burn ps-1.5 shadow-xs">
+              <LoadingAnim type="avatar" />
             </div>
-          )
-        }
-        {
-          responding && (
-            <div className='absolute -top-[3px] -left-[3px] pl-[6px] flex items-center w-4 h-4 bg-white rounded-full shadow-xs border-[0.5px] border-gray-50'>
-              <LoadingAnim type='avatar' />
-            </div>
-          )
-        }
-      </div>
-      <div className='chat-answer-container grow w-0 ml-4' ref={containerRef}>
-        <div className={`group relative pr-10 ${chatAnswerContainerInner}`}>
-          <AnswerTriangle className='absolute -left-2 top-0 w-2 h-3 text-gray-100' />
+          )}
+        </div>
+      )}
+      <div
+        className="chat-answer-container group ms-4 w-0 grow pb-4"
+        ref={containerRef}
+        data-testid="chat-answer-container"
+      >
+        {/* Block 1: Workflow Process + Human Input Forms */}
+        {hasHumanInputs && (
           <div
-            ref={contentRef}
-            className={`
-              relative inline-block px-4 py-3 max-w-full bg-gray-100 rounded-b-2xl rounded-tr-2xl text-sm text-gray-900
-              ${workflowProcess && 'w-full'}
-            `}
+            className={cn('group relative pe-10', chatAnswerContainerInner)}
+            data-testid="chat-answer-container-humaninput"
           >
-            {annotation?.id && (
-              <div
-                className='absolute -top-3.5 -right-3.5 box-border flex items-center justify-center h-7 w-7 p-0.5 rounded-lg bg-white cursor-pointer text-[#444CE7] shadow-md group-hover:hidden'
-              >
-                <div className='p-1 rounded-lg bg-[#EEF4FF] '>
-                  <MessageFast className='w-4 h-4' />
-                </div>
-              </div>
-            )}
-            {
-              !responding && (
+            <div
+              ref={humanInputFormContainerRef}
+              className={cn(
+                'relative inline-block w-full max-w-full rounded-2xl bg-chat-bubble-bg px-4 py-3 body-lg-regular text-text-primary',
+              )}
+            >
+              {!responding && contentIsEmpty && !hasAgentContent && (
                 <Operation
+                  answerActionPosition={answerActionPosition}
+                  hasWorkflowProcess={!!workflowProcess}
+                  maxSize={containerWidth - humanInputFormContainerWidth - 4}
+                  contentWidth={humanInputFormContainerWidth}
+                  item={item}
+                  question={question}
+                  index={index}
+                  noChatInput={noChatInput}
+                />
+              )}
+              {/** Render workflow process */}
+              {workflowProcess && (
+                <WorkflowProcessItem
+                  data={workflowProcess}
+                  item={item}
+                  hideProcessDetail={hideProcessDetail}
+                  readonly={
+                    hideProcessDetail && appData ? !appData.site.show_workflow_steps : undefined
+                  }
+                />
+              )}
+              {humanInputFormDataList && humanInputFormDataList.length > 0 && (
+                <HumanInputFormList
+                  humanInputFormDataList={humanInputFormDataList}
+                  onHumanInputFormSubmit={onHumanInputFormSubmit}
+                  getHumanInputNodeData={getHumanInputNodeData}
+                />
+              )}
+              {humanInputFilledFormDataList && humanInputFilledFormDataList.length > 0 && (
+                <HumanInputFilledFormList
+                  humanInputFilledFormDataList={humanInputFilledFormDataList}
+                />
+              )}
+              {typeof item.siblingCount === 'number' &&
+                item.siblingCount > 1 &&
+                !responding &&
+                contentIsEmpty &&
+                !hasAgentContent && (
+                  <ContentSwitch
+                    count={item.siblingCount}
+                    currentIndex={item.siblingIndex}
+                    prevDisabled={!item.prevSibling}
+                    nextDisabled={!item.nextSibling}
+                    switchSibling={handleSwitchSibling}
+                  />
+                )}
+            </div>
+          </div>
+        )}
+
+        {/* Block 2: Response Content (when human inputs exist) */}
+        {hasHumanInputs &&
+          (responding ||
+            !contentIsEmpty ||
+            hasAgentContent ||
+            hasReasoning ||
+            hasWorkflowActivities) && (
+            <div className={cn('group relative mt-2 pe-10', chatAnswerContainerInner)}>
+              <div className="absolute inset-s-6 -top-2 h-3 w-0.5 bg-chat-answer-human-input-form-divider-bg" />
+              <div
+                ref={contentRef}
+                className="relative inline-block w-full max-w-full rounded-2xl bg-chat-bubble-bg px-4 py-3 body-lg-regular text-text-primary"
+              >
+                {!responding && (
+                  <Operation
+                    answerActionPosition={answerActionPosition}
+                    hasWorkflowProcess={!!workflowProcess}
+                    maxSize={containerWidth - contentWidth - 4}
+                    contentWidth={contentWidth}
+                    item={item}
+                    question={question}
+                    index={index}
+                    noChatInput={noChatInput}
+                  />
+                )}
+                {hasReasoning && (
+                  <ReasoningPanel content={item.reasoningContent ?? {}} done={reasoningDone} />
+                )}
+                {responding &&
+                  contentIsEmpty &&
+                  !hasAgentContent &&
+                  !hasReasoning &&
+                  !hasWorkflowActivities && (
+                    <div className="flex h-5 w-6 items-center justify-center">
+                      <LoadingAnim type="text" />
+                    </div>
+                  )}
+                {hasWorkflowActivities && (
+                  <WorkflowToolActivity item={item} responding={responding} />
+                )}
+                {!contentIsEmpty && !hasAgentContent && <BasicContent item={item} />}
+                {hasAgentContent && agentContentNode}
+                {!!allFiles?.length && (
+                  <FileList
+                    className="my-1"
+                    files={allFiles}
+                    showDeleteAction={false}
+                    showDownloadAction
+                    canPreview
+                  />
+                )}
+                {!!message_files?.length && (
+                  <FileList
+                    className="my-1"
+                    files={message_files}
+                    showDeleteAction={false}
+                    showDownloadAction
+                    canPreview
+                  />
+                )}
+                {annotation?.id && annotation.authorName && (
+                  <EditTitle
+                    className="mt-1"
+                    title={t(($) => $.editBy, {
+                      ns: 'appAnnotation',
+                      author: annotation.authorName,
+                    })}
+                  />
+                )}
+                <SuggestedQuestions item={item} />
+                {!!citation?.length && !responding && (
+                  <Citation data={citation} showHitInfo={config?.supportCitationHitInfo} />
+                )}
+                {typeof item.siblingCount === 'number' && item.siblingCount > 1 && (
+                  <ContentSwitch
+                    count={item.siblingCount}
+                    currentIndex={item.siblingIndex}
+                    prevDisabled={!item.prevSibling}
+                    nextDisabled={!item.nextSibling}
+                    switchSibling={handleSwitchSibling}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+
+        {/* Original single block layout (when no human inputs) */}
+        {!hasHumanInputs && (
+          <div
+            className={cn('group relative pe-10', chatAnswerContainerInner)}
+            data-testid="chat-answer-container-inner"
+          >
+            <div
+              ref={contentRef}
+              className={cn(
+                'relative inline-block max-w-full rounded-2xl bg-chat-bubble-bg px-4 py-3 body-lg-regular text-text-primary',
+                workflowProcess && 'w-full',
+              )}
+            >
+              {!responding && (
+                <Operation
+                  answerActionPosition={answerActionPosition}
                   hasWorkflowProcess={!!workflowProcess}
                   maxSize={containerWidth - contentWidth - 4}
                   contentWidth={contentWidth}
                   item={item}
                   question={question}
                   index={index}
-                  showPromptLog={showPromptLog}
+                  noChatInput={noChatInput}
                 />
-              )
-            }
-            {
-              workflowProcess && (
-                <WorkflowProcess data={workflowProcess} hideInfo />
-              )
-            }
-            {
-              responding && !content && !hasAgentThoughts && (
-                <div className='flex items-center justify-center w-6 h-5'>
-                  <LoadingAnim type='text' />
-                </div>
-              )
-            }
-            {
-              content && !hasAgentThoughts && (
-                <BasicContent item={item} />
-              )
-            }
-            {
-              hasAgentThoughts && (
-                <AgentContent
+              )}
+              {/** Render workflow process */}
+              {workflowProcess && (
+                <WorkflowProcessItem
+                  data={workflowProcess}
                   item={item}
-                  responding={responding}
-                  allToolIcons={allToolIcons}
+                  hideProcessDetail={hideProcessDetail}
+                  readonly={
+                    hideProcessDetail && appData ? !appData.site?.show_workflow_steps : undefined
+                  }
                 />
-              )
-            }
-            {
-              annotation?.id && annotation.authorName && (
+              )}
+              {hasReasoning && (
+                <ReasoningPanel content={item.reasoningContent ?? {}} done={reasoningDone} />
+              )}
+              {responding &&
+                contentIsEmpty &&
+                !hasAgentContent &&
+                !hasReasoning &&
+                !hasWorkflowActivities && (
+                  <div className="flex h-5 w-6 items-center justify-center">
+                    <LoadingAnim type="text" />
+                  </div>
+                )}
+              {hasWorkflowActivities && (
+                <WorkflowToolActivity item={item} responding={responding} />
+              )}
+              {!contentIsEmpty && !hasAgentContent && <BasicContent item={item} />}
+              {hasAgentContent && agentContentNode}
+              {!!allFiles?.length && (
+                <FileList
+                  className="my-1"
+                  files={allFiles}
+                  showDeleteAction={false}
+                  showDownloadAction
+                  canPreview
+                />
+              )}
+              {!!message_files?.length && (
+                <FileList
+                  className="my-1"
+                  files={message_files}
+                  showDeleteAction={false}
+                  showDownloadAction
+                  canPreview
+                />
+              )}
+              {annotation?.id && annotation.authorName && (
                 <EditTitle
-                  className='mt-1'
-                  title={t('appAnnotation.editBy', { author: annotation.authorName })}
+                  className="mt-1"
+                  title={t(($) => $.editBy, { ns: 'appAnnotation', author: annotation.authorName })}
                 />
-              )
-            }
-            <SuggestedQuestions item={item} />
-            {
-              !!citation?.length && !responding && (
+              )}
+              <SuggestedQuestions item={item} />
+              {!!citation?.length && !responding && (
                 <Citation data={citation} showHitInfo={config?.supportCitationHitInfo} />
-              )
-            }
+              )}
+              {typeof item.siblingCount === 'number' && item.siblingCount > 1 && (
+                <ContentSwitch
+                  count={item.siblingCount}
+                  currentIndex={item.siblingIndex}
+                  prevDisabled={!item.prevSibling}
+                  nextDisabled={!item.nextSibling}
+                  switchSibling={handleSwitchSibling}
+                />
+              )}
+            </div>
           </div>
-        </div>
+        )}
         <More more={more} />
+        {item.isError && (
+          <p role="alert" className="system-sm-regular text-text-destructive">
+            {t(($) => $['api.actionFailed'], { ns: 'common' })}
+          </p>
+        )}
+        {footer}
       </div>
     </div>
   )

@@ -1,277 +1,79 @@
-import os
-import sys
-from logging.handlers import RotatingFileHandler
+from __future__ import annotations
 
-if not os.environ.get("DEBUG") or os.environ.get("DEBUG").lower() != 'true':
+# ``python -m app`` (docker DEBUG=true, or IDE debugging) serves through the
+# gevent pywsgi server at the bottom of this file, so the stdlib must be
+# monkey-patched BEFORE any other import pulls in sockets or locks. Without
+# this, every request runs as a greenlet on one OS thread while blocking
+# calls (LLM invokes, ``Future.result`` waits, DB I/O) pin that thread — the
+# whole process freezes until the call returns. Gunicorn and Celery apply
+# their own patching (see gunicorn.conf.py / celery_entrypoint.py), and
+# ``flask run`` uses real Werkzeug threads, so both skip this branch.
+if __name__ == "__main__":
     from gevent import monkey
 
     monkey.patch_all()
-    # if os.environ.get("VECTOR_STORE") == 'milvus':
-    import grpc.experimental.gevent
 
-    grpc.experimental.gevent.init_gevent()
+    import psycogreen.gevent as psycogreen_gevent
+    from grpc.experimental import gevent as grpc_gevent
 
-import json
+    grpc_gevent.init_gevent()
+    psycogreen_gevent.patch_psycopg()
+
 import logging
-import threading
-import time
-import warnings
+import sys
+from typing import TYPE_CHECKING, cast
 
-from flask import Flask, Response, request
-from flask_cors import CORS
-from werkzeug.exceptions import Unauthorized
+if TYPE_CHECKING:
+    from celery import Celery
 
-from commands import register_commands
-from config import CloudEditionConfig, Config
-
-# DO NOT REMOVE BELOW
-from events import event_handlers
-from extensions import (
-    ext_celery,
-    ext_code_based_extension,
-    ext_compress,
-    ext_database,
-    ext_hosting_provider,
-    ext_login,
-    ext_mail,
-    ext_migrate,
-    ext_redis,
-    ext_sentry,
-    ext_storage,
-)
-from extensions.ext_database import db
-from extensions.ext_login import login_manager
-from libs.passport import PassportService
-from models import account, dataset, model, source, task, tool, tools, web
-from services.account_service import AccountService
-
-# DO NOT REMOVE ABOVE
+    celery: Celery
 
 
-warnings.simplefilter("ignore", ResourceWarning)
-
-# fix windows platform
-if os.name == "nt":
-    os.system('tzutil /s "UTC"')
-else:
-    os.environ['TZ'] = 'UTC'
-    time.tzset()
+HOST = "0.0.0.0"
+PORT = 5001
+logger = logging.getLogger(__name__)
 
 
-class DifyApp(Flask):
-    pass
+def is_db_command() -> bool:
+    return bool(len(sys.argv) > 1 and sys.argv[0].endswith("flask") and sys.argv[1] == "db")
 
 
-# -------------
-# Configuration
-# -------------
-
-
-config_type = os.getenv('EDITION', default='SELF_HOSTED')  # ce edition first
-
-
-# ----------------------------
-# Application Factory Function
-# ----------------------------
-
-
-def create_app(test_config=None) -> Flask:
-    app = DifyApp(__name__)
-
-    if test_config:
-        app.config.from_object(test_config)
-    else:
-        if config_type == "CLOUD":
-            app.config.from_object(CloudEditionConfig())
-        else:
-            app.config.from_object(Config())
-
-    app.secret_key = app.config['SECRET_KEY']
-
-    log_handlers = None
-    log_file = app.config.get('LOG_FILE')
-    if log_file:
-        log_dir = os.path.dirname(log_file)
-        os.makedirs(log_dir, exist_ok=True)
-        log_handlers = [
-            RotatingFileHandler(
-                filename=log_file,
-                maxBytes=1024 * 1024 * 1024,
-                backupCount=5
-            ),
-            logging.StreamHandler(sys.stdout)
-        ]
-    logging.basicConfig(
-        level=app.config.get('LOG_LEVEL'),
-        format=app.config.get('LOG_FORMAT'),
-        datefmt=app.config.get('LOG_DATEFORMAT'),
-        handlers=log_handlers
-    )
-
-    initialize_extensions(app)
-    register_blueprints(app)
-    register_commands(app)
-
-    return app
-
-
-def initialize_extensions(app):
-    # Since the application instance is now created, pass it to each Flask
-    # extension instance to bind it to the Flask application instance (app)
-    ext_compress.init_app(app)
-    ext_code_based_extension.init()
-    ext_database.init_app(app)
-    ext_migrate.init(app, db)
-    ext_redis.init_app(app)
-    ext_storage.init_app(app)
-    ext_celery.init_app(app)
-    ext_login.init_app(app)
-    ext_mail.init_app(app)
-    ext_hosting_provider.init_app(app)
-    ext_sentry.init_app(app)
-
-
-# Flask-Login configuration
-@login_manager.request_loader
-def load_user_from_request(request_from_flask_login):
-    """Load user based on the request."""
-    if request.blueprint in ['console', 'inner_api']:
-        # Check if the user_id contains a dot, indicating the old format
-        auth_header = request.headers.get('Authorization', '')
-        if not auth_header:
-            auth_token = request.args.get('_token')
-            if not auth_token:
-                raise Unauthorized('Invalid Authorization token.')
-        else:
-            if ' ' not in auth_header:
-                raise Unauthorized('Invalid Authorization header format. Expected \'Bearer <api-key>\' format.')
-            auth_scheme, auth_token = auth_header.split(None, 1)
-            auth_scheme = auth_scheme.lower()
-            if auth_scheme != 'bearer':
-                raise Unauthorized('Invalid Authorization header format. Expected \'Bearer <api-key>\' format.')
-
-        decoded = PassportService().verify(auth_token)
-        user_id = decoded.get('user_id')
-
-        return AccountService.load_user(user_id)
-    else:
-        return None
-
-
-@login_manager.unauthorized_handler
-def unauthorized_handler():
-    """Handle unauthorized requests."""
-    return Response(json.dumps({
-        'code': 'unauthorized',
-        'message': "Unauthorized."
-    }), status=401, content_type="application/json")
-
-
-# register blueprint routers
-def register_blueprints(app):
-    from controllers.console import bp as console_app_bp
-    from controllers.files import bp as files_bp
-    from controllers.inner_api import bp as inner_api_bp
-    from controllers.service_api import bp as service_api_bp
-    from controllers.web import bp as web_bp
-
-    CORS(service_api_bp,
-         allow_headers=['Content-Type', 'Authorization', 'X-App-Code'],
-         methods=['GET', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'PATCH']
-         )
-    app.register_blueprint(service_api_bp)
-
-    CORS(web_bp,
-         resources={
-             r"/*": {"origins": app.config['WEB_API_CORS_ALLOW_ORIGINS']}},
-         supports_credentials=True,
-         allow_headers=['Content-Type', 'Authorization', 'X-App-Code'],
-         methods=['GET', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'PATCH'],
-         expose_headers=['X-Version', 'X-Env']
-         )
-
-    app.register_blueprint(web_bp)
-
-    CORS(console_app_bp,
-         resources={
-             r"/*": {"origins": app.config['CONSOLE_CORS_ALLOW_ORIGINS']}},
-         supports_credentials=True,
-         allow_headers=['Content-Type', 'Authorization'],
-         methods=['GET', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'PATCH'],
-         expose_headers=['X-Version', 'X-Env']
-         )
-
-    app.register_blueprint(console_app_bp)
-
-    CORS(files_bp,
-         allow_headers=['Content-Type'],
-         methods=['GET', 'PUT', 'POST', 'DELETE', 'OPTIONS', 'PATCH']
-         )
-    app.register_blueprint(files_bp)
-
-    app.register_blueprint(inner_api_bp)
+def log_startup_banner(host: str, port: int) -> None:
+    debugger_attached = sys.gettrace() is not None
+    logger.info("Serving Dify API via gevent WebSocket server")
+    logger.info("Bound to http://%s:%s", host, port)
+    logger.info("Debugger attached: %s", "on" if debugger_attached else "off")
+    logger.info("Press CTRL+C to quit")
 
 
 # create app
-app = create_app()
-celery = app.extensions["celery"]
+flask_app = None
+socketio_app = None
 
-if app.config['TESTING']:
-    print("App is running in TESTING mode")
+if is_db_command():
+    from app_factory import create_migrations_app
 
+    app = create_migrations_app()
+    socketio_app = app
+    flask_app = app
+else:
+    # Gunicorn and Celery handle monkey patching automatically in production by
+    # specifying the `gevent` worker class. Manual monkey patching is not required here.
+    #
+    # See `api/docker/entrypoint.sh` (lines 33 and 47) for details.
+    #
+    # For third-party library patching, refer to `gunicorn.conf.py` and `celery_entrypoint.py`.
 
-@app.after_request
-def after_request(response):
-    """Add Version headers to the response."""
-    response.set_cookie('remember_token', '', expires=0)
-    response.headers.add('X-Version', app.config['CURRENT_VERSION'])
-    response.headers.add('X-Env', app.config['DEPLOY_ENV'])
-    return response
+    from app_factory import create_app
 
+    socketio_app, flask_app = create_app()
+    app = flask_app
+    celery = cast("Celery", app.extensions["celery"])
 
-@app.route('/health')
-def health():
-    return Response(json.dumps({
-        'status': 'ok',
-        'version': app.config['CURRENT_VERSION']
-    }), status=200, content_type="application/json")
+if __name__ == "__main__":
+    from gevent import pywsgi
+    from geventwebsocket.handler import WebSocketHandler
 
-
-@app.route('/threads')
-def threads():
-    num_threads = threading.active_count()
-    threads = threading.enumerate()
-
-    thread_list = []
-    for thread in threads:
-        thread_name = thread.name
-        thread_id = thread.ident
-        is_alive = thread.is_alive()
-
-        thread_list.append({
-            'name': thread_name,
-            'id': thread_id,
-            'is_alive': is_alive
-        })
-
-    return {
-        'thread_num': num_threads,
-        'threads': thread_list
-    }
-
-
-@app.route('/db-pool-stat')
-def pool_stat():
-    engine = db.engine
-    return {
-        'pool_size': engine.pool.size(),
-        'checked_in_connections': engine.pool.checkedin(),
-        'checked_out_connections': engine.pool.checkedout(),
-        'overflow_connections': engine.pool.overflow(),
-        'connection_timeout': engine.pool.timeout(),
-        'recycle_time': db.engine.pool._recycle
-    }
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001)
+    log_startup_banner(HOST, PORT)
+    server = pywsgi.WSGIServer((HOST, PORT), socketio_app, handler_class=WebSocketHandler)
+    server.serve_forever()

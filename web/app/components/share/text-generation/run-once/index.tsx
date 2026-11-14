@@ -1,137 +1,355 @@
-import type { FC } from 'react'
-import React from 'react'
-import { useTranslation } from 'react-i18next'
-import {
-  PlayIcon,
-} from '@heroicons/react/24/solid'
-import Select from '@/app/components/base/select'
-import type { SiteInfo } from '@/models/share'
+import type { FC, SubmitEvent } from 'react'
+import type { InputValueTypes } from '../types'
+import type { FileUploaderInAttachmentRef } from '@/app/components/base/file-uploader/file-uploader-in-attachment'
+import type { FileEntity } from '@/app/components/base/file-uploader/types'
 import type { PromptConfig } from '@/models/debug'
-import Button from '@/app/components/base/button'
-import { DEFAULT_VALUE_MAX_LEN } from '@/config'
-import TextGenerationImageUploader from '@/app/components/base/image-uploader/text-generation-image-uploader'
+import type { SiteInfo } from '@/models/share'
 import type { VisionFile, VisionSettings } from '@/types/app'
+import { Button } from '@langgenius/dify-ui/button'
+import { Input } from '@langgenius/dify-ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectItemIndicator,
+  SelectItemText,
+  SelectTrigger,
+  SelectValue,
+} from '@langgenius/dify-ui/select'
+import { Textarea } from '@langgenius/dify-ui/textarea'
+import { RiLoader2Line, RiPlayLargeLine } from '@remixicon/react'
+import * as React from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { FileUploaderInAttachmentWrapper } from '@/app/components/base/file-uploader'
+import TextGenerationImageUploader from '@/app/components/base/image-uploader/text-generation-image-uploader'
+import BoolInput from '@/app/components/workflow/nodes/_base/components/before-run-form/bool-input'
+import CodeEditor from '@/app/components/workflow/nodes/_base/components/editor/code-editor'
+import { CodeLanguage } from '@/app/components/workflow/nodes/code/types'
 
-export type IRunOnceProps = {
+type IRunOnceProps = {
   siteInfo: SiteInfo
   promptConfig: PromptConfig
-  inputs: Record<string, any>
-  onInputsChange: (inputs: Record<string, any>) => void
+  inputs: Record<string, InputValueTypes>
+  inputsRef: React.RefObject<Record<string, InputValueTypes>>
+  onInputsChange: (inputs: Record<string, InputValueTypes>) => void
   onSend: () => void
   visionConfig: VisionSettings
   onVisionFilesChange: (files: VisionFile[]) => void
+  runControl?: {
+    onStop: () => Promise<void> | void
+    isStopping: boolean
+  } | null
 }
+
 const RunOnce: FC<IRunOnceProps> = ({
   promptConfig,
   inputs,
+  inputsRef,
   onInputsChange,
   onSend,
   visionConfig,
   onVisionFilesChange,
+  runControl,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common', 'share', 'workflow'])
+  const baseId = useId()
+  const [isInitialized, setIsInitialized] = useState(false)
+  const fileUploadersRef = useRef(new Map<string, FileUploaderInAttachmentRef>())
+
+  const handleInputsChange = useCallback(
+    (newInputs: Record<string, any>) => {
+      onInputsChange(newInputs)
+      inputsRef.current = newInputs
+    },
+    [onInputsChange, inputsRef],
+  )
 
   const onClear = () => {
+    const newInputs: Record<string, InputValueTypes> = {}
+    promptConfig.prompt_variables.forEach((item) => {
+      if (item.type === 'string' || item.type === 'paragraph') newInputs[item.key] = ''
+      else if (item.type === 'number') newInputs[item.key] = ''
+      else if (item.type === 'checkbox') newInputs[item.key] = false
+      else if (item.type === 'file' && item.required === false) newInputs[item.key] = ''
+      else if (item.type === 'file-list') newInputs[item.key] = []
+      else newInputs[item.key] = undefined
+    })
+    fileUploadersRef.current.forEach((uploader) => uploader.clear())
+    handleInputsChange(newInputs)
+  }
+
+  const onSubmit = (e: SubmitEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    onSend()
+  }
+  const isRunning = !!runControl
+  const stopLabel = t(($) => $['generation.stopRun'], { ns: 'share', defaultValue: 'Stop Run' })
+  const handlePrimaryClick = useCallback(
+    (e: React.MouseEvent<HTMLButtonElement>) => {
+      if (!isRunning) return
+      e.preventDefault()
+      runControl?.onStop?.()
+    },
+    [isRunning, runControl],
+  )
+
+  useEffect(() => {
+    if (isInitialized) return
     const newInputs: Record<string, any> = {}
     promptConfig.prompt_variables.forEach((item) => {
-      newInputs[item.key] = ''
+      if (item.type === 'select') newInputs[item.key] = item.default
+      else if (item.type === 'string' || item.type === 'paragraph')
+        newInputs[item.key] = item.default || ''
+      else if (item.type === 'number') newInputs[item.key] = item.default ?? ''
+      else if (item.type === 'checkbox') newInputs[item.key] = item.default || false
+      else if (item.type === 'file')
+        newInputs[item.key] =
+          item.default && typeof item.default === 'object' && !Array.isArray(item.default)
+            ? item.default
+            : undefined
+      else if (item.type === 'file-list')
+        newInputs[item.key] = Array.isArray(item.default) ? item.default : []
+      else newInputs[item.key] = undefined
     })
     onInputsChange(newInputs)
-  }
+    setIsInitialized(true)
+  }, [promptConfig.prompt_variables, onInputsChange])
 
   return (
     <div className="">
       <section>
         {/* input form */}
-        <form>
-          {promptConfig.prompt_variables.map(item => (
-            <div className='w-full mt-4' key={item.key}>
-              <label className='text-gray-900 text-sm font-medium'>{item.name}</label>
-              <div className='mt-2'>
-                {item.type === 'select' && (
-                  <Select
-                    className='w-full'
-                    defaultValue={inputs[item.key]}
-                    onSelect={(i) => { onInputsChange({ ...inputs, [item.key]: i.value }) }}
-                    items={(item.options || []).map(i => ({ name: i, value: i }))}
-                    allowSearch={false}
-                    bgClassName='bg-gray-50'
-                  />
-                )}
-                {item.type === 'string' && (
-                  <input
-                    type="text"
-                    className="block w-full p-2 text-gray-900 border border-gray-300 rounded-lg bg-gray-50 sm:text-xs focus:ring-blue-500 focus:border-blue-500 "
-                    placeholder={`${item.name}${!item.required ? `(${t('appDebug.variableTable.optional')})` : ''}`}
-                    value={inputs[item.key]}
-                    onChange={(e) => { onInputsChange({ ...inputs, [item.key]: e.target.value }) }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        onSend()
-                      }
-                    }}
-                    maxLength={item.max_length || DEFAULT_VALUE_MAX_LEN}
-                  />
-                )}
-                {item.type === 'paragraph' && (
-                  <textarea
-                    className="block w-full h-[104px] p-2 text-gray-900 border border-gray-300 rounded-lg bg-gray-50 sm:text-xs focus:ring-blue-500 focus:border-blue-500 "
-                    placeholder={`${item.name}${!item.required ? `(${t('appDebug.variableTable.optional')})` : ''}`}
-                    value={inputs[item.key]}
-                    onChange={(e) => { onInputsChange({ ...inputs, [item.key]: e.target.value }) }}
-                  />
-                )}
-                {item.type === 'number' && (
-                  <input
-                    type="number"
-                    className="block w-full p-2 text-gray-900 border border-gray-300 rounded-lg bg-gray-50 sm:text-xs focus:ring-blue-500 focus:border-blue-500 "
-                    placeholder={`${item.name}${!item.required ? `(${t('appDebug.variableTable.optional')})` : ''}`}
-                    value={inputs[item.key]}
-                    onChange={(e) => { onInputsChange({ ...inputs, [item.key]: e.target.value }) }}
-                  />
-                )}
+        <form onSubmit={onSubmit}>
+          {inputs === null ||
+          inputs === undefined ||
+          Object.keys(inputs).length === 0 ||
+          !isInitialized
+            ? null
+            : promptConfig.prompt_variables
+                .filter((item) => item.hide !== true)
+                .map((item) => {
+                  const inputValue = inputs[item.key]
+                  const selectValue =
+                    typeof inputValue === 'string' && inputValue !== '' ? inputValue : null
+                  const defaultSelectValue =
+                    typeof item.default === 'string' && item.default !== '' ? item.default : null
+
+                  return (
+                    <div className="mt-4 w-full" key={item.key}>
+                      {item.type !== 'checkbox' && (
+                        <div className="flex h-6 items-center gap-1 system-md-semibold text-text-secondary">
+                          <div id={`${baseId}-${item.key}-label`} className="truncate">
+                            {item.name}
+                          </div>
+                          {!item.required && (
+                            <span className="system-xs-regular text-text-tertiary">
+                              {t(($) => $['panel.optional'], { ns: 'workflow' })}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      <div className="mt-1">
+                        {item.type === 'select' && (
+                          <Select<string>
+                            value={selectValue ?? defaultSelectValue}
+                            onValueChange={(nextValue) => {
+                              if (nextValue == null || nextValue === '') return
+                              handleInputsChange({ ...inputsRef.current, [item.key]: nextValue })
+                            }}
+                          >
+                            <SelectTrigger
+                              aria-labelledby={`${baseId}-${item.key}-label`}
+                              className="w-full"
+                            >
+                              <SelectValue
+                                placeholder={t(($) => $['placeholder.select'], { ns: 'common' })}
+                              />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(item.options || []).map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  <SelectItemText>{option}</SelectItemText>
+                                  <SelectItemIndicator />
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        {item.type === 'string' && (
+                          <Input
+                            aria-labelledby={`${baseId}-${item.key}-label`}
+                            type="text"
+                            placeholder={item.name}
+                            value={inputs[item.key] as string}
+                            onValueChange={(value) => {
+                              handleInputsChange({
+                                ...inputsRef.current,
+                                [item.key]: value,
+                              })
+                            }}
+                            maxLength={item.max_length || undefined}
+                          />
+                        )}
+                        {item.type === 'paragraph' && (
+                          <Textarea
+                            aria-labelledby={`${baseId}-${item.key}-label`}
+                            className="h-26 sm:text-xs"
+                            placeholder={item.name}
+                            value={inputs[item.key] as string}
+                            onValueChange={(value) => {
+                              handleInputsChange({ ...inputsRef.current, [item.key]: value })
+                            }}
+                          />
+                        )}
+                        {item.type === 'number' && (
+                          <Input
+                            aria-labelledby={`${baseId}-${item.key}-label`}
+                            type="number"
+                            placeholder={item.name}
+                            value={inputs[item.key] as number}
+                            onValueChange={(value) => {
+                              handleInputsChange({
+                                ...inputsRef.current,
+                                [item.key]: value,
+                              })
+                            }}
+                          />
+                        )}
+                        {item.type === 'checkbox' && (
+                          <BoolInput
+                            name={item.name || item.key}
+                            value={!!inputs[item.key] as boolean}
+                            required={item.required}
+                            onChange={(value) => {
+                              handleInputsChange({ ...inputsRef.current, [item.key]: value })
+                            }}
+                          />
+                        )}
+                        {item.type === 'file' && (
+                          <FileUploaderInAttachmentWrapper
+                            ref={(uploader) => {
+                              if (uploader) fileUploadersRef.current.set(item.key, uploader)
+                              else fileUploadersRef.current.delete(item.key)
+                            }}
+                            value={
+                              inputs[item.key] &&
+                              typeof inputs[item.key] === 'object' &&
+                              !Array.isArray(inputs[item.key])
+                                ? [inputs[item.key] as FileEntity]
+                                : []
+                            }
+                            onChange={(files) => {
+                              const value = files[0] ?? (item.required === false ? '' : undefined)
+                              handleInputsChange({ ...inputsRef.current, [item.key]: value })
+                            }}
+                            fileConfig={{
+                              ...item.config,
+                              fileUploadConfig: (visionConfig as any).fileUploadConfig,
+                            }}
+                          />
+                        )}
+                        {item.type === 'file-list' && (
+                          <FileUploaderInAttachmentWrapper
+                            ref={(uploader) => {
+                              if (uploader) fileUploadersRef.current.set(item.key, uploader)
+                              else fileUploadersRef.current.delete(item.key)
+                            }}
+                            value={
+                              Array.isArray(inputs[item.key])
+                                ? (inputs[item.key] as FileEntity[])
+                                : []
+                            }
+                            onChange={(files) => {
+                              handleInputsChange({ ...inputsRef.current, [item.key]: files })
+                            }}
+                            fileConfig={{
+                              ...item.config,
+                              // oxlint-disable-next-line typescript/no-explicit-any
+                              fileUploadConfig: (visionConfig as any).fileUploadConfig,
+                            }}
+                          />
+                        )}
+                        {item.type === 'json_object' && (
+                          <CodeEditor
+                            language={CodeLanguage.json}
+                            value={inputs[item.key] as string}
+                            onChange={(value) => {
+                              handleInputsChange({ ...inputsRef.current, [item.key]: value })
+                            }}
+                            noWrapper
+                            className="bg h-20 overflow-y-auto rounded-[10px] bg-components-input-bg-normal p-1"
+                            placeholder={
+                              <div className="whitespace-pre">
+                                {typeof item.json_schema === 'string'
+                                  ? item.json_schema
+                                  : JSON.stringify(item.json_schema || '', null, 2)}
+                              </div>
+                            }
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+          {visionConfig?.enabled && (
+            <div className="mt-4 w-full">
+              <div className="flex h-6 items-center system-md-semibold text-text-secondary">
+                {t(($) => $['imageUploader.imageUpload'], { ns: 'common' })}
+              </div>
+              <div className="mt-1">
+                <TextGenerationImageUploader
+                  settings={visionConfig}
+                  onFilesChange={(files) =>
+                    onVisionFilesChange(
+                      files
+                        .filter((file) => file.progress !== -1)
+                        .map((fileItem) => ({
+                          type: 'image',
+                          transfer_method: fileItem.type,
+                          url: fileItem.url,
+                          upload_file_id: fileItem.fileId,
+                        })),
+                    )
+                  }
+                />
               </div>
             </div>
-          ))}
-          {
-            visionConfig?.enabled && (
-              <div className="w-full mt-4">
-                <div className="text-gray-900 text-sm font-medium">{t('common.imageUploader.imageUpload')}</div>
-                <div className='mt-2'>
-                  <TextGenerationImageUploader
-                    settings={visionConfig}
-                    onFilesChange={files => onVisionFilesChange(files.filter(file => file.progress !== -1).map(fileItem => ({
-                      type: 'image',
-                      transfer_method: fileItem.type,
-                      url: fileItem.url,
-                      upload_file_id: fileItem.fileId,
-                    })))}
-                  />
-                </div>
-              </div>
-            )
-          }
-          {promptConfig.prompt_variables.length > 0 && (
-            <div className='mt-4 h-[1px] bg-gray-100'></div>
           )}
-          <div className='w-full mt-4'>
-            <div className="flex items-center justify-between">
-              <Button
-                className='!h-8 !p-3'
-                onClick={onClear}
-                disabled={false}
-              >
-                <span className='text-[13px]'>{t('common.operation.clear')}</span>
+          <div className="mt-6 mb-3 w-full">
+            <div className="flex items-center justify-between gap-2">
+              <Button onClick={onClear} disabled={false}>
+                <span className="text-[13px]">
+                  {t(($) => $['operation.clear'], { ns: 'common' })}
+                </span>
               </Button>
               <Button
-                type="primary"
-                className='!h-8 !pl-3 !pr-4'
-                onClick={onSend}
-                disabled={false}
+                className="max-md:grow"
+                type={isRunning ? 'button' : 'submit'}
+                variant={isRunning ? 'secondary' : 'primary'}
+                disabled={isRunning && runControl?.isStopping}
+                onClick={handlePrimaryClick}
               >
-                <PlayIcon className="shrink-0 w-4 h-4 mr-1" aria-hidden="true" />
-                <span className='text-[13px]'>{t('share.generation.run')}</span>
+                {isRunning ? (
+                  <>
+                    {runControl?.isStopping ? (
+                      <RiLoader2Line className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <span
+                        aria-hidden="true"
+                        className="i-custom-vender-solid-mediaAndDevices-stop-circle size-4 shrink-0"
+                      />
+                    )}
+                    <span className="text-[13px]">{stopLabel}</span>
+                  </>
+                ) : (
+                  <>
+                    <RiPlayLargeLine className="size-4 shrink-0" aria-hidden="true" />
+                    <span className="text-[13px]">
+                      {t(($) => $['generation.run'], { ns: 'share' })}
+                    </span>
+                  </>
+                )}
               </Button>
             </div>
           </div>

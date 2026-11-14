@@ -2,19 +2,20 @@
 
 set -x
 
-# python style checks rely on `ruff` in path
-if ! command -v ruff &> /dev/null; then
-    echo "Installing Ruff ..."
-    pip install ruff
-fi
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+cd "$SCRIPT_DIR/.."
+
+# Import linter
+uv run --directory api --dev lint-imports
 
 # run ruff linter
-ruff check --fix ./api
+uv run --directory api --dev ruff check --fix ./
 
-# env files linting relies on `dotenv-linter` in path
-if ! command -v dotenv-linter &> /dev/null; then
-    echo "Installing dotenv-linter ..."
-    pip install dotenv-linter
-fi
+# run ruff formatter
+uv run --directory api --dev ruff format ./
 
-dotenv-linter ./api/.env.example ./web/.env.example
+# run dotenv-linter linter
+uv run --project api --dev dotenv-linter ./api/.env.example ./web/.env.example
+
+# run pyrefly check
+dev/pyrefly-check-local

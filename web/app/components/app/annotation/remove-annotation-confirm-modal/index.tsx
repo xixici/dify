@@ -1,29 +1,39 @@
 'use client'
-import type { FC } from 'react'
-import React from 'react'
+import {
+  AlertDialogCancelButton,
+  AlertDialogConfirmButton,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@langgenius/dify-ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
-import DeleteConfirmModal from '@/app/components/base/modal/delete-confirm-modal'
 
-type Props = {
-  isShow: boolean
-  onHide: () => void
+type RemoveAnnotationConfirmContentProps = {
+  isPending: boolean
   onRemove: () => void
 }
 
-const RemoveAnnotationConfirmModal: FC<Props> = ({
-  isShow,
-  onHide,
+export function RemoveAnnotationConfirmContent({
+  isPending,
   onRemove,
-}) => {
-  const { t } = useTranslation()
+}: RemoveAnnotationConfirmContentProps) {
+  const { t } = useTranslation(['appDebug', 'common'])
+  const title = t(($) => $['feature.annotation.removeConfirm'], { ns: 'appDebug' })
 
   return (
-    <DeleteConfirmModal
-      isShow={isShow}
-      onHide={onHide}
-      onRemove={onRemove}
-      text={t('appDebug.feature.annotation.removeConfirm') as string}
-    />
+    <AlertDialogContent backdropProps={{ forceRender: true }}>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{title}</AlertDialogTitle>
+      </AlertDialogHeader>
+      <AlertDialogFooter>
+        <AlertDialogCancelButton disabled={isPending}>
+          {t(($) => $['operation.cancel'], { ns: 'common' })}
+        </AlertDialogCancelButton>
+        <AlertDialogConfirmButton loading={isPending} onClick={onRemove}>
+          {t(($) => $['operation.confirm'], { ns: 'common' })}
+        </AlertDialogConfirmButton>
+      </AlertDialogFooter>
+    </AlertDialogContent>
   )
 }
-export default React.memo(RemoveAnnotationConfirmModal)

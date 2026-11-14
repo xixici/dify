@@ -1,40 +1,46 @@
-import { useCallback } from 'react'
 import type { ChangeEvent } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import cn from 'classnames'
-import s from './index.module.css'
 
 type SearchInputProps = {
   value: string
   onChange: (v: string) => void
 }
-const SearchInput = ({
-  value,
-  onChange,
-}: SearchInputProps) => {
-  const { t } = useTranslation()
+const SearchInput = ({ value, onChange }: SearchInputProps) => {
+  const { t } = useTranslation(['common'])
 
   const handleClear = useCallback(() => {
     onChange('')
   }, [onChange])
 
+  const placeholderText = t(($) => $['dataSource.notion.selector.searchPages'], { ns: 'common' })
+  /* v8 ignore next -- i18n test mock always returns a non-empty string; runtime fallback is defensive. -- @preserve */
+  const safePlaceholderText = placeholderText || ''
+
   return (
-    <div className={cn(s['input-wrapper'], 'flex items-center px-2 h-7 rounded-md', `${value ? 'bg-white' : 'bg-gray-100'}`)}>
-      <div className={cn(s['search-icon'], 'mr-[6px] w-4 h-4')} />
+    <div className={cn('flex h-8 w-50 items-center rounded-lg bg-components-input-bg-normal p-2')}>
+      <div className="mr-0.5 i-ri-search-line size-4 shrink-0 text-components-input-text-placeholder" />
       <input
-        className='grow text-[13px] bg-inherit border-0 outline-0 appearance-none'
+        aria-label={safePlaceholderText}
+        className="min-w-0 grow appearance-none border-0 bg-transparent px-1 text-[13px] leading-4 text-components-input-text-filled outline-0 placeholder:text-components-input-text-placeholder"
         value={value}
         onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-        placeholder={t('common.dataSource.notion.selector.searchPages') || ''}
+        placeholder={safePlaceholderText}
       />
-      {
-        value && (
-          <div
-            className={cn(s['clear-icon'], 'ml-1 w-4 h-4 cursor-pointer')}
-            onClick={handleClear}
+      {value ? (
+        <button
+          type="button"
+          aria-label={t(($) => $['operation.clear'], { ns: 'common' })}
+          className="flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent p-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-components-input-border-active"
+          onClick={handleClear}
+        >
+          <span
+            className="i-ri-close-circle-fill size-4 text-components-input-text-placeholder"
+            aria-hidden="true"
           />
-        )
-      }
+        </button>
+      ) : null}
     </div>
   )
 }

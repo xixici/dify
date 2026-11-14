@@ -1,21 +1,21 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
+import * as React from 'react'
 
-export type IGroupNameProps = {
+type IGroupNameProps = {
   name: string
 }
 
-const GroupName: FC<IGroupNameProps> = ({
-  name,
-}) => {
+const GroupName: FC<IGroupNameProps> = ({ name }) => {
   return (
-    <div className='flex items-center mb-1'>
-      <div className='mr-3 leading-[18px] text-xs font-semibold text-gray-500 uppercase'>{name}</div>
-      <div className='grow h-[1px]'
+    <div className="mb-1 flex items-center">
+      <div className="mr-3 text-xs leading-4.5 font-semibold text-text-tertiary uppercase">
+        {name}
+      </div>
+      <div
+        className="h-px grow"
         style={{
           background: 'linear-gradient(270deg, rgba(243, 244, 246, 0) 0%, #F3F4F6 100%)',
-
         }}
       ></div>
     </div>

@@ -1,144 +1,446 @@
-# Written by YORKI MINAKO🤡, Edited by Xiaoyi
-CONVERSATION_TITLE_PROMPT = """You need to decompose the user's input into "subject" and "intention" in order to accurately figure out what the user's input language actually is. 
-Notice: the language type user use could be diverse, which can be English, Chinese, Español, Arabic, Japanese, French, and etc.
-MAKE SURE your output is the SAME language as the user's input!
-Your output is restricted only to: (Input language) Intention + Subject(short as possible)
-Your output MUST be a valid JSON.
+# Written by YORKI MINAKO🤡, Edited by Xiaoyi, Edited by yasu-oh
 
-Tip: When the user's question is directed at you (the language model), you can add an emoji to make it more fun.
+CONVERSATION_TITLE_PROMPT = """You are asked to generate a concise chat title by decomposing the user’s input into two parts: “Intention” and “Subject”.
 
+1. Detect Input Language
+Automatically identify the language of the user’s input (e.g. English, Chinese, Italian, Español, Arabic, Japanese, French, and etc.).
 
-example 1:
-User Input: hi, yesterday i had some burgers.
+2. Generate Title
+- Combine Intention + Subject into a single, as-short-as-possible phrase.
+- The title must be natural, friendly, and in the same language as the input.
+- If the input is a direct question to the model, you may add an emoji at the end.
+
+3. Output Format
+Return **only** a valid JSON object with these exact keys and no additional text:
 {
-  "Language Type": "The user's input is pure English",
-  "Your Reasoning": "The language of my output must be pure English.",
-  "Your Output": "sharing yesterday's food"
+  "Language Type": "<Detected language>",
+  "Your Reasoning": "<Brief explanation in that language>",
+  "Your Output": "<Intention + Subject>"
 }
 
-example 2:
-User Input: hello
-{
-  "Language Type": "The user's input is written in pure English",
-  "Your Reasoning": "The language of my output must be pure English.",
-  "Your Output": "Greeting myself☺️"
-}
+User Input:
+"""  # noqa: E501
+
+PYTHON_CODE_GENERATOR_PROMPT_TEMPLATE = (
+    "You are an expert programmer. Generate code based on the following instructions:\n\n"
+    "Instructions: {{INSTRUCTION}}\n\n"
+    "Write the code in {{CODE_LANGUAGE}}.\n\n"
+    "Please ensure that you meet the following requirements:\n"
+    "1. Define a function named 'main'.\n"
+    "2. The 'main' function must return a dictionary (dict).\n"
+    "3. You may modify the arguments of the 'main' function, but include appropriate type hints.\n"
+    "4. The returned dictionary should contain at least one key-value pair.\n\n"
+    "5. You may ONLY use the following libraries in your code: \n"
+    "- json\n"
+    "- datetime\n"
+    "- math\n"
+    "- random\n"
+    "- re\n"
+    "- string\n"
+    "- sys\n"
+    "- time\n"
+    "- traceback\n"
+    "- uuid\n"
+    "- os\n"
+    "- base64\n"
+    "- hashlib\n"
+    "- hmac\n"
+    "- binascii\n"
+    "- collections\n"
+    "- functools\n"
+    "- operator\n"
+    "- itertools\n\n"
+    "Example:\n"
+    "def main(arg1: str, arg2: int) -> dict:\n"
+    "    return {\n"
+    '        "result": arg1 * arg2,\n'
+    "    }\n\n"
+    "IMPORTANT:\n"
+    "- Provide ONLY the code without any additional explanations, comments, or markdown formatting.\n"
+    "- DO NOT use markdown code blocks (``` or ``` python). Return the raw code directly.\n"
+    "- The code should start immediately after this instruction, without any preceding newlines or spaces.\n"
+    "- The code should be complete, functional, and follow best practices for {{CODE_LANGUAGE}}.\n\n"
+    "- Always use the format return {'result': ...} for the output.\n\n"
+    "Generated Code:\n"
+)
+JAVASCRIPT_CODE_GENERATOR_PROMPT_TEMPLATE = (
+    "You are an expert programmer. Generate code based on the following instructions:\n\n"
+    "Instructions: {{INSTRUCTION}}\n\n"
+    "Write the code in {{CODE_LANGUAGE}}.\n\n"
+    "Please ensure that you meet the following requirements:\n"
+    "1. Define a function named 'main'.\n"
+    "2. The 'main' function must return an object.\n"
+    "3. You may modify the arguments of the 'main' function, but include appropriate JSDoc annotations.\n"
+    "4. The returned object should contain at least one key-value pair.\n\n"
+    "5. The returned object should always be in the format: {result: ...}\n\n"
+    "Example:\n"
+    "/**\n"
+    " * Multiplies two numbers together.\n"
+    " *\n"
+    " * @param {number} arg1 - The first number to multiply.\n"
+    " * @param {number} arg2 - The second number to multiply.\n"
+    " * @returns {{ result: number }} The result of the multiplication.\n"
+    " */\n"
+    "function main(arg1, arg2) {\n"
+    "    return {\n"
+    "        result: arg1 * arg2\n"
+    "    };\n"
+    "}\n\n"
+    "IMPORTANT:\n"
+    "- Provide ONLY the code without any additional explanations, comments, or markdown formatting.\n"
+    "- DO NOT use markdown code blocks (``` or ``` javascript). Return the raw code directly.\n"
+    "- The code should start immediately after this instruction, without any preceding newlines or spaces.\n"
+    "- The code should be complete, functional, and follow best practices for {{CODE_LANGUAGE}}.\n\n"
+    "Generated Code:\n"
+)
 
 
-example 3:
-User Input: why mmap file: oom
-{
-  "Language Type": "The user's input is written in pure English",
-  "Your Reasoning": "The language of my output must be pure English.",
-  "Your Output": "Asking about the reason for mmap file: oom"
-}
-
-
-example 4:
-User Input: www.convinceme.yesterday-you-ate-seafood.tv讲了什么？
-{
-  "Language Type": "The user's input English-Chinese mixed",
-  "Your Reasoning": "The English-part is an URL, the main intention is still written in Chinese, so the language of my output must be using Chinese.",
-  "Your Output": "询问网站www.convinceme.yesterday-you-ate-seafood.tv"
-}
-
-example 5:
-User Input: why小红的年龄is老than小明？
-{
-  "Language Type": "The user's input is English-Chinese mixed",
-  "Your Reasoning": "The English parts are subjective particles, the main intention is written in Chinese, besides, Chinese occupies a greater \"actual meaning\" than English, so the language of my output must be using Chinese.",
-  "Your Output": "询问小红和小明的年龄"
-}
-
-example 6:
-User Input: yo, 你今天咋样？
-{
-  "Language Type": "The user's input is English-Chinese mixed",
-  "Your Reasoning": "The English-part is a subjective particle, the main intention is written in Chinese, so the language of my output must be using Chinese.",
-  "Your Output": "查询今日我的状态☺️"
-}
-
-User Input: 
-"""
-
-SUGGESTED_QUESTIONS_AFTER_ANSWER_INSTRUCTION_PROMPT = (
+# Default prompt and model parameters for suggested questions.
+DEFAULT_SUGGESTED_QUESTIONS_AFTER_ANSWER_INSTRUCTION_PROMPT = (
     "Please help me predict the three most likely questions that human would ask, "
-    "and keeping each question under 20 characters.\n"
+    "and keep each question under 20 characters.\n"
+    "MAKE SURE your output is the SAME language as the Assistant's latest response. "
     "The output must be an array in JSON format following the specified schema:\n"
-    "[\"question1\",\"question2\",\"question3\"]\n"
+    '["question1","question2","question3"]\n'
 )
 
 GENERATOR_QA_PROMPT = (
-    '<Task> The user will send a long text. Generate a Question and Answer pairs only using the knowledge in the long text. Please think step by step.'
-    'Step 1: Understand and summarize the main content of this text.\n'
-    'Step 2: What key information or concepts are mentioned in this text?\n'
-    'Step 3: Decompose or combine multiple pieces of information and concepts.\n'
-    'Step 4: Generate questions and answers based on these key information and concepts.\n'
-    '<Constraints> The questions should be clear and detailed, and the answers should be detailed and complete. '
-    'You must answer in {language}, in a style that is clear and detailed in {language}. No language other than {language} should be used. \n'
-    '<Format> Use the following format: Q1:\nA1:\nQ2:\nA2:...\n'
-    '<QA Pairs>'
+    "<Task> The user will send a long text. Generate a Question and Answer pairs only using the knowledge"
+    " in the long text. Please think step by step."
+    "Step 1: Understand and summarize the main content of this text.\n"
+    "Step 2: What key information or concepts are mentioned in this text?\n"
+    "Step 3: Decompose or combine multiple pieces of information and concepts.\n"
+    "Step 4: Generate questions and answers based on these key information and concepts.\n"
+    "<Constraints> The questions should be clear and detailed, and the answers should be detailed and complete. "
+    "You must answer in {language}, in a style that is clear and detailed in {language}."
+    " No language other than {language} should be used. \n"
+    "<Format> Use the following format: Q1:\nA1:\nQ2:\nA2:...\n"
+    "<QA Pairs>"
 )
 
-RULE_CONFIG_GENERATE_TEMPLATE = """Given MY INTENDED AUDIENCES and HOPING TO SOLVE using a language model, please select \
-the model prompt that best suits the input. 
-You will be provided with the prompt, variables, and an opening statement. 
-Only the content enclosed in double curly braces, such as {{variable}}, in the prompt can be considered as a variable; \
-otherwise, it cannot exist as a variable in the variables.
-If you believe revising the original input will result in a better response from the language model, you may \
-suggest revisions.
+WORKFLOW_RULE_CONFIG_PROMPT_GENERATE_TEMPLATE = """
+Here is a task description for which I would like you to create a high-quality prompt template for:
+<task_description>
+{{TASK_DESCRIPTION}}
+</task_description>
+Based on task description, please create a well-structured prompt template that another AI could use to consistently complete the task. The prompt template should include:
+- Do not include <input> or <output> section and variables in the prompt, assume user will add them at their own will.
+- Clear instructions for the AI that will be using this prompt, demarcated with <instruction> tags. The instructions should provide step-by-step directions on how to complete the task using the input variables. Also Specifies in the instructions that the output should not contain any xml tag.
+- Relevant examples if needed to clarify the task further, demarcated with <example> tags. Do not include variables in the prompt. Give three pairs of input and output examples.
+- Include other relevant sections demarcated with appropriate XML tags like <examples>, <instruction>.
+- Use the same language as task description.
+- Output in ``` xml ``` and start with <instruction>
+Please generate the full prompt template with at least 300 words and output only the prompt template.
+"""  # noqa: E501
 
-<<PRINCIPLES OF GOOD PROMPT>>
-Integrate the intended audience in the prompt e.g. the audience is an expert in the field.
-Break down complex tasks into a sequence of simpler prompts in an interactive conversation.
-Implement example-driven prompting (Use few-shot prompting). 
-When formatting your prompt start with Instruction followed by either Example if relevant. \
-Subsequently present your content. Use one or more line breaks to separate instructions examples questions context and input data.
-Incorporate the following phrases: “Your task is” and “You MUST”.
-Incorporate the following phrases: “You will be penalized”.
-Use leading words like writing “think step by step”.
-Add to your prompt the following phrase “Ensure that your answer is unbiased and does not rely on stereotypes”.
-Assign a role to the large language models.
-Use Delimiters.
-To write an essay /text /paragraph /article or any type of text that should be detailed: “Write a detailed [essay/text/paragraph] for me on [topic] in detail by adding all the information necessary”.
-Clearly state the requirements that the model must follow in order to produce content in the form of the keywords regulations hint or instructions
+RULE_CONFIG_PROMPT_GENERATE_TEMPLATE = """
+Here is a task description for which I would like you to create a high-quality prompt template for:
+<task_description>
+{{TASK_DESCRIPTION}}
+</task_description>
+Based on task description, please create a well-structured prompt template that another AI could use to consistently complete the task. The prompt template should include:
+- Descriptive variable names surrounded by {{ }} (two curly brackets) to indicate where the actual values will be substituted in. Choose variable names that clearly indicate the type of value expected. Variable names have to be composed of number, english alphabets and underline and nothing else.
+- Clear instructions for the AI that will be using this prompt, demarcated with <instruction> tags. The instructions should provide step-by-step directions on how to complete the task using the input variables. Also Specifies in the instructions that the output should not contain any xml tag.
+- Relevant examples if needed to clarify the task further, demarcated with <example> tags. Do not use curly brackets any other than in <instruction> section.
+- Any other relevant sections demarcated with appropriate XML tags like <input>, <output>, etc.
+- Use the same language as task description.
+- Output in ``` xml ``` and start with <instruction>
+Please generate the full prompt template and output only the prompt template.
+"""  # noqa: E501
 
-<< FORMATTING >>
-Return a markdown code snippet with a JSON object formatted to look like, \
-no any other string out of markdown code snippet:
-```json
-{{{{
-    "prompt": string \\ generated prompt
-    "variables": list of string \\ variables
-    "opening_statement": string \\ an opening statement to guide users on how to ask questions with generated prompt \
-and fill in variables, with a welcome sentence, and keep TLDR.
-}}}}
-```
+RULE_CONFIG_PARAMETER_GENERATE_TEMPLATE = """
+I need to extract the following information from the input text. The <information to be extracted> tag specifies the 'type', 'description' and 'required' of the information to be extracted.
+<information to be extracted>
+variables name bounded two double curly brackets. Variable name has to be composed of number, english alphabets and underline and nothing else.
+</information to be extracted>
 
-<< EXAMPLES >>
-[EXAMPLE A]
-```json
+Step 1: Carefully read the input and understand the structure of the expected output.
+Step 2: Extract relevant parameters from the provided text based on the name and description of object.
+Step 3: Structure the extracted parameters to JSON object as specified in <structure>.
+Step 4: Ensure that the list of variable_names is properly formatted and valid. The output should not contain any XML tags. Output an empty list if there is no valid variable name in input text.
+
+### Structure
+Here is the structure of the expected output, I should always follow the output structure.
+["variable_name_1", "variable_name_2"]
+
+### Input Text
+Inside <text></text> XML tags, there is a text that I should extract parameters and convert to a JSON object.
+<text>
+{{INPUT_TEXT}}
+</text>
+
+### Answer
+I should always output a valid list. Output nothing other than the list of variable_name. Output an empty list if there is no variable name in input text.
+"""  # noqa: E501
+
+RULE_CONFIG_STATEMENT_GENERATE_TEMPLATE = """
+<instruction>
+Step 1: Identify the purpose of the chatbot from the variable {{TASK_DESCRIPTION}} and infer chatbot's tone  (e.g., friendly, professional, etc.) to add personality traits.
+Step 2: Create a coherent and engaging opening statement.
+Step 3: Ensure the output is welcoming and clearly explains what the chatbot is designed to do. Do not include any XML tags in the output.
+Please use the same language as the user's input language. If user uses chinese then generate opening statement in chinese,  if user uses english then generate opening statement in english.
+Example Input:
+Provide customer support for an e-commerce website
+Example Output:
+Welcome! I'm here to assist you with any questions or issues you might have with your shopping experience. Whether you're looking for product information, need help with your order, or have any other inquiries, feel free to ask. I'm friendly, helpful, and ready to support you in any way I can.
+<Task>
+Here is the task description: {{INPUT_TEXT}}
+
+You just need to generate the output
+"""  # noqa: E501
+
+SYSTEM_STRUCTURED_OUTPUT_GENERATE = """
+Your task is to convert simple user descriptions into properly formatted JSON Schema definitions. When a user describes data fields they need, generate a complete, valid JSON Schema that accurately represents those fields with appropriate types and requirements.
+
+## Instructions:
+
+1. Analyze the user's description of their data needs
+2. Identify each property that should be included in the schema
+3. Determine the appropriate data type for each property
+4. Decide which properties should be required
+5. Generate a complete JSON Schema with proper syntax
+6. Include appropriate constraints when specified (min/max values, patterns, formats)
+7. Provide ONLY the JSON Schema without any additional explanations, comments, or markdown formatting.
+8. DO NOT use markdown code blocks (``` or ``` json). Return the raw JSON Schema directly.
+
+## Examples:
+
+### Example 1:
+**User Input:** I need name and age
+**JSON Schema Output:**
 {
-  "prompt": "I need your help to translate the following {{Input_language}}paper paragraph into {{Target_language}}, in a style similar to a popular science magazine in {{Target_language}}. #### Rules Ensure accurate conveyance of the original text's facts and context during translation. Maintain the original paragraph format and retain technical terms and company abbreviations ",
-  "variables": ["Input_language", "Target_language"],
-  "opening_statement": " Hi. I am your translation assistant. I can help you with any translation and ensure accurate conveyance of information. "
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "age": { "type": "number" }
+  },
+  "required": ["name", "age"]
 }
-```
 
-[EXAMPLE B]
-```json
+### Example 2:
+**User Input:** I want to store information about books including title, author, publication year and optional page count
+**JSON Schema Output:**
 {
-  "prompt": "Your task is to review the provided meeting notes and create a concise summary that captures the essential information, focusing on key takeaways and action items assigned to specific individuals or departments during the meeting. Use clear and professional language, and organize the summary in a logical manner using appropriate formatting such as headings, subheadings, and bullet points. Ensure that the summary is easy to understand and provides a comprehensive but succinct overview of the meeting's content, with a particular focus on clearly indicating who is responsible for each action item.",
-  "variables": ["meeting_notes"],
-  "opening_statement": "Hi! I'm your meeting notes summarizer AI. I can help you with any meeting notes and ensure accurate conveyance of information."
+  "type": "object",
+  "properties": {
+    "title": { "type": "string" },
+    "author": { "type": "string" },
+    "publicationYear": { "type": "integer" },
+    "pageCount": { "type": "integer" }
+  },
+  "required": ["title", "author", "publicationYear"]
 }
-```
 
-<< MY INTENDED AUDIENCES >>
-{{audiences}}
+### Example 3:
+**User Input:** Create a schema for user profiles with email, password, and age (must be at least 18)
+**JSON Schema Output:**
+{
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "format": "email"
+    },
+    "password": {
+      "type": "string",
+      "minLength": 8
+    },
+    "age": {
+      "type": "integer",
+      "minimum": 18
+    }
+  },
+  "required": ["email", "password", "age"]
+}
 
-<< HOPING TO SOLVE >>
-{{hoping_to_solve}}
+### Example 4:
+**User Input:** I need album schema, the album has songs, and each song has name, duration, and artist.
+**JSON Schema Output:**
+{
+    "type": "object",
+    "properties": {
+        "songs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "duration": {
+                        "type": "string"
+                    },
+                    "artist": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                    "name",
+                    "id",
+                    "duration",
+                    "artist"
+                ]
+            }
+        }
+    },
+    "required": [
+        "songs"
+    ]
+}
 
-<< OUTPUT >>
+Now, generate a JSON Schema based on my description
+"""  # noqa: E501
+
+STRUCTURED_OUTPUT_PROMPT = """You’re a helpful AI assistant. You could answer questions and output in JSON format.
+constraints:
+    - You must output in JSON format.
+    - Strictly follow the provided JSON schema, including all field types.
+    - Use JSON true or false for boolean values, never strings.
+    - Use JSON numbers for numeric fields and JSON null where allowed by the schema.
+eg:
+    Here is the JSON schema:
+    {"additionalProperties": false, "properties": {"age": {"type": "number"}, "name": {"type": "string"}, "is_active": {"type": "boolean"}}, "required": ["name", "age", "is_active"], "type": "object"}
+
+    Here is the user's question:
+    My name is John Doe, I am 30 years old, and my account is active.
+
+    output:
+    {"name": "John Doe", "age": 30, "is_active": true}
+Here is the JSON schema:
+{{schema}}
+"""  # noqa: E501
+
+LLM_MODIFY_PROMPT_SYSTEM = """
+Both your input and output should be in JSON format.
+
+! Below is the schema for input content !
+{
+    "type": "object",
+    "description": "The user is trying to process some content with a prompt, but the output is not as expected. They hope to achieve their goal by modifying the prompt.",
+    "properties": {
+        "current": {
+            "type": "string",
+            "description": "The prompt before modification, where placeholders {{}} will be replaced with actual values for the large language model. The content in the placeholders should not be changed."
+        },
+        "last_run": {
+            "type": "object",
+            "description": "The output result from the large language model after receiving the prompt.",
+        },
+        "instruction": {
+            "type": "string",
+            "description": "User's instruction to edit the current prompt"
+        },
+        "ideal_output": {
+            "type": "string",
+            "description": "The ideal output that the user expects from the large language model after modifying the prompt. You should compare the last output with the ideal output and make changes to the prompt to achieve the goal."
+        }
+    }
+}
+! Above is the schema for input content !
+
+! Below is the schema for output content !
+{
+    "type": "object",
+    "description": "Your feedback to the user after they provide modification suggestions.",
+    "properties": {
+        "modified": {
+            "type": "string",
+            "description": "Your modified prompt. You should change the original prompt as little as possible to achieve the goal. Keep the language of prompt if not asked to change"
+        },
+        "message": {
+            "type": "string",
+            "description": "Your feedback to the user, in the user's language, explaining what you did and your thought process in text, providing sufficient emotional value to the user."
+        }
+    },
+    "required": [
+        "modified",
+        "message"
+    ]
+}
+! Above is the schema for output content !
+
+Your output must strictly follow the schema format, do not output any content outside of the JSON body.
+"""  # noqa: E501
+
+LLM_MODIFY_CODE_SYSTEM = """
+Both your input and output should be in JSON format.
+
+! Below is the schema for input content !
+{
+    "type": "object",
+    "description": "The user is trying to process some data with a code snippet, but the result is not as expected. They hope to achieve their goal by modifying the code.",
+    "properties": {
+        "current": {
+            "type": "string",
+            "description": "The code before modification."
+        },
+        "last_run": {
+            "type": "object",
+            "description": "The result of the code.",
+        },
+        "message": {
+            "type": "string",
+            "description": "User's instruction to edit the current code"
+        }
+    }
+}
+! Above is the schema for input content !
+
+! Below is the schema for output content !
+{
+    "type": "object",
+    "description": "Your feedback to the user after they provide modification suggestions.",
+    "properties": {
+        "modified": {
+            "type": "string",
+            "description": "Your modified code. You should change the original code as little as possible to achieve the goal. Keep the programming language of code if not asked to change"
+        },
+        "message": {
+            "type": "string",
+            "description": "Your feedback to the user, in the user's language, explaining what you did and your thought process in text, providing sufficient emotional value to the user."
+        }
+    },
+    "required": [
+        "modified",
+        "message"
+    ]
+}
+! Above is the schema for output content !
+
+When you are modifying the code, you should remember:
+- Do not use print, this not work in dify sandbox.
+- Do not try dangerous call like deleting files. It's PROHIBITED.
+- Do not use any library that is not built-in with Python.
+- Get inputs from the parameters of the function and have explicit type annotations.
+- Write proper imports at the top of the code.
+- Use return statement to return the result.
+- You should return a `dict`. If you need to return a `result: str`, you should `return {"result": result}`.
+Your output must strictly follow the schema format, do not output any content outside of the JSON body.
+"""  # noqa: E501
+
+INSTRUCTION_GENERATE_TEMPLATE_PROMPT = """The output of this prompt is not as expected: {{#last_run#}}.
+You should edit the prompt according to the IDEAL OUTPUT."""
+
+INSTRUCTION_GENERATE_TEMPLATE_CODE = """Please fix the errors in the {{#error_message#}}."""
+
+DEFAULT_GENERATOR_SUMMARY_PROMPT = (
+    """Summarize the following content. Extract only the key information and main points. """
+    """Remove redundant details.
+
+Requirements:
+1. Write a concise summary in plain text
+2. You must write in {language}. No language other than {language} should be used.
+3. Focus on important facts, concepts, and details
+4. If images are included, describe their key information
+5. Do not use words like "好的", "ok", "I understand", "This text discusses", "The content mentions"
+6. Write directly without extra words
+7. If there is not enough content to generate a meaningful summary,
+   return an empty string without any explanation or prompt
+
+Output only the summary text. Start summarizing now:
+
 """
+)

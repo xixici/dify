@@ -1,54 +1,68 @@
 import type { FC } from 'react'
-import React from 'react'
-import { useTranslation } from 'react-i18next'
-import VarReferencePicker from '../_base/components/variable/var-reference-picker'
-import useConfig from './use-config'
-import ClassList from './components/class-list'
-import AdvancedSetting from './components/advanced-setting'
 import type { QuestionClassifierNodeType } from './types'
-import Field from '@/app/components/workflow/nodes/_base/components/field'
+import type { NodePanelProps } from '@/app/components/workflow/types'
+import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import ModelParameterModal from '@/app/components/header/account-setting/model-provider-page/model-parameter-modal'
-import { InputVarType, type NodePanelProps } from '@/app/components/workflow/types'
-import BeforeRunForm from '@/app/components/workflow/nodes/_base/components/before-run-form'
-import ResultPanel from '@/app/components/workflow/run/result-panel'
+import { FieldCollapse } from '@/app/components/workflow/nodes/_base/components/collapse'
+import Field from '@/app/components/workflow/nodes/_base/components/field'
+import OutputVars, { VarItem } from '@/app/components/workflow/nodes/_base/components/output-vars'
+import Split from '@/app/components/workflow/nodes/_base/components/split'
+import ClassList from '../_base/components/branch-list/class-list'
+import ConfigVision from '../_base/components/config-vision'
+import VarReferencePicker from '../_base/components/variable/var-reference-picker'
+import AdvancedSetting from './components/advanced-setting'
+import useConfig from './use-config'
 
-const i18nPrefix = 'workflow.nodes.questionClassifiers'
+const i18nPrefix = 'nodes.questionClassifiers'
 
-const Panel: FC<NodePanelProps<QuestionClassifierNodeType>> = ({
-  id,
-  data,
-}) => {
-  const { t } = useTranslation()
+const Panel: FC<NodePanelProps<QuestionClassifierNodeType>> = ({ id, data }) => {
+  const { t } = useTranslation(['workflow', 'workflowModels'])
 
   const {
     readOnly,
     inputs,
     handleModelChanged,
-    isChatMode,
+    isChatflow,
+    isChatModel,
     handleCompletionParamsChange,
     handleQueryVarChange,
     handleTopicsChange,
+    hasSetBlockStatus,
+    availableVars,
+    availableNodesWithParent,
     handleInstructionChange,
     handleMemoryChange,
-    isShowSingleRun,
-    hideSingleRun,
-    runningStatus,
-    handleRun,
-    handleStop,
-    query,
-    setQuery,
-    runResult,
+    isVisionModel,
+    handleVisionResolutionChange,
+    handleVisionResolutionEnabledChange,
     filterVar,
+    handleSortTopic,
   } = useConfig(id, data)
 
   const model = inputs.model
 
   return (
-    <div>
-      <div className='mt-2 px-4 space-y-4'>
-        <Field
-          title={t(`${i18nPrefix}.inputVars`)}
-        >
+    <div className="pt-2">
+      <div className="space-y-4 px-4">
+        <Field title={t(($) => $[`${i18nPrefix}.model`], { ns: 'workflow' })} required>
+          <ModelParameterModal
+            popupClassName="w-[387px]!"
+            isInWorkflow
+            isAdvancedMode={true}
+            provider={model?.provider}
+            completionParams={model.completion_params}
+            modelId={model.name}
+            setModel={handleModelChanged}
+            onCompletionParamsChange={handleCompletionParamsChange}
+            hideDebugWithMultipleModel
+            debugWithMultipleModel={false}
+            readonly={readOnly}
+            nodesOutputVars={availableVars}
+            availableNodes={availableNodesWithParent}
+          />
+        </Field>
+        <Field title={t(($) => $[`${i18nPrefix}.inputVars`], { ns: 'workflow' })} required>
           <VarReferencePicker
             readonly={readOnly}
             isShowNodeName
@@ -58,70 +72,67 @@ const Panel: FC<NodePanelProps<QuestionClassifierNodeType>> = ({
             filterVar={filterVar}
           />
         </Field>
-        <Field
-          title={t(`${i18nPrefix}.model`)}
-        >
-          <ModelParameterModal
-            popupClassName='!w-[387px]'
-            isInWorkflow
-            isAdvancedMode={true}
-            mode={model?.mode}
-            provider={model?.provider}
-            completionParams={model.completion_params}
-            modelId={model.name}
-            setModel={handleModelChanged}
-            onCompletionParamsChange={handleCompletionParamsChange}
-            hideDebugWithMultipleModel
-            debugWithMultipleModel={false}
-            readonly={readOnly}
-          />
-        </Field>
-        <Field
-          title={t(`${i18nPrefix}.class`)}
-        >
-          <ClassList
-            id={id}
-            list={inputs.classes}
-            onChange={handleTopicsChange}
-            readonly={readOnly}
-          />
-        </Field>
-        <Field
-          title={t(`${i18nPrefix}.advancedSetting`)}
-          supportFold
-        >
-          <AdvancedSetting
-            hideMemorySetting={!isChatMode}
-            instruction={inputs.instruction}
-            onInstructionChange={handleInstructionChange}
-            memory={inputs.memory}
-            onMemoryChange={handleMemoryChange}
-            readonly={readOnly}
-          />
-        </Field>
-      </div>
-      {isShowSingleRun && (
-        <BeforeRunForm
-          nodeName={inputs.title}
-          onHide={hideSingleRun}
-          forms={[
-            {
-              inputs: [{
-                label: t(`${i18nPrefix}.inputVars`)!,
-                variable: 'query',
-                type: InputVarType.paragraph,
-                required: true,
-              }],
-              values: { query },
-              onChange: keyValue => setQuery((keyValue as any).query),
-            },
-          ]}
-          runningStatus={runningStatus}
-          onRun={handleRun}
-          onStop={handleStop}
-          result={<ResultPanel {...runResult} showSteps={false} />}
+        <Split />
+        <ConfigVision
+          nodeId={id}
+          readOnly={readOnly}
+          isVisionModel={isVisionModel}
+          enabled={inputs.vision?.enabled}
+          onEnabledChange={handleVisionResolutionEnabledChange}
+          config={inputs.vision?.configs}
+          onConfigChange={handleVisionResolutionChange}
         />
-      )}
+        <ClassList
+          nodeId={id}
+          list={inputs.classes}
+          onChange={handleTopicsChange}
+          readonly={readOnly}
+          filterVar={filterVar}
+          handleSortTopic={handleSortTopic}
+        />
+        <Split />
+      </div>
+      <FieldCollapse title={t(($) => $[`${i18nPrefix}.advancedSetting`], { ns: 'workflowModels' })}>
+        <AdvancedSetting
+          hideMemorySetting={!isChatflow}
+          instruction={inputs.instruction}
+          onInstructionChange={handleInstructionChange}
+          memory={inputs.memory}
+          onMemoryChange={handleMemoryChange}
+          readonly={readOnly}
+          isChatApp={isChatflow}
+          isChatModel={isChatModel}
+          hasSetBlockStatus={hasSetBlockStatus}
+          nodesOutputVars={availableVars}
+          availableNodes={availableNodesWithParent}
+        />
+      </FieldCollapse>
+      <Split />
+      <div>
+        <OutputVars>
+          <>
+            <VarItem
+              name="class_name"
+              type="string"
+              description={t(($) => $[`${i18nPrefix}.outputVars.className`], {
+                ns: 'workflowModels',
+              })}
+            />
+            <VarItem
+              name="class_label"
+              type="string"
+              description={t(($) => $[`${i18nPrefix}.outputVars.classLabel`], {
+                ns: 'workflowModels',
+              })}
+            />
+            <VarItem
+              name="usage"
+              type="object"
+              description={t(($) => $[`${i18nPrefix}.outputVars.usage`], { ns: 'workflowModels' })}
+            />
+          </>
+        </OutputVars>
+      </div>
     </div>
   )
 }

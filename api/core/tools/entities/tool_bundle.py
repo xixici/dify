@@ -1,36 +1,32 @@
-from typing import Any, Optional
+from collections.abc import Mapping
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from core.tools.entities.tool_entities import ToolParameter, ToolProviderType
+from core.tools.entities.tool_entities import ToolParameter
 
 
-class ApiBasedToolBundle(BaseModel):
+class ApiToolBundle(BaseModel):
     """
-    This class is used to store the schema information of an api based tool. such as the url, the method, the parameters, etc.
+    This class is used to store the schema information of an api based tool.
+     such as the url, the method, the parameters, etc.
     """
+
     # server_url
     server_url: str
     # method
     method: str
     # summary
-    summary: Optional[str] = None
+    summary: str | None = None
     # operation_id
-    operation_id: str = None
+    operation_id: str | None = None
     # parameters
-    parameters: Optional[list[ToolParameter]] = None
+    parameters: list[ToolParameter] | None = None
     # author
     author: str
     # icon
-    icon: Optional[str] = None
+    icon: str | None = None
     # openapi operation
-    openapi: dict
-
-class AppToolBundle(BaseModel):
-    """
-    This class is used to store the schema information of an tool for an app.
-    """
-    type: ToolProviderType
-    credential: Optional[dict[str, Any]] = None
-    provider_id: str
-    tool_name: str
+    openapi: dict[str, Any]
+    # output schema
+    output_schema: Mapping[str, object] = Field(default_factory=dict)

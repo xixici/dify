@@ -1,23 +1,26 @@
 'use client'
 import type { FC } from 'react'
-import React, { useCallback } from 'react'
-import produce from 'immer'
-import { useTranslation } from 'react-i18next'
 import type { KeyValue } from '../../../types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { produce } from 'immer'
+import * as React from 'react'
+import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import KeyValueItem from './item'
-// import TooltipPlus from '@/app/components/base/tooltip-plus'
-// import { EditList } from '@/app/components/base/icons/src/vender/solid/communication'
 
-const i18nPrefix = 'workflow.nodes.http'
+const i18nPrefix = 'nodes.http'
 
-type Props = {
+type Props = Readonly<{
   readonly: boolean
   nodeId: string
   list: KeyValue[]
   onChange: (newList: KeyValue[]) => void
   onAdd: () => void
+  isSupportFile?: boolean
   // onSwitchToBulkEdit: () => void
-}
+  keyNotSupportVar?: boolean
+  insertVarTipToLeft?: boolean
+}>
 
 const KeyValueList: FC<Props> = ({
   readonly,
@@ -25,63 +28,85 @@ const KeyValueList: FC<Props> = ({
   list,
   onChange,
   onAdd,
+  isSupportFile,
   // onSwitchToBulkEdit,
+  keyNotSupportVar,
+  insertVarTipToLeft,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['workflowIntegrations'])
 
-  const handleChange = useCallback((index: number) => {
-    return (newItem: KeyValue) => {
-      const newList = produce(list, (draft: any) => {
-        draft[index] = newItem
-      })
-      onChange(newList)
-    }
-  }, [list, onChange])
+  const handleChange = useCallback(
+    (index: number) => {
+      return (newItem: KeyValue) => {
+        const newList = produce(list, (draft) => {
+          draft[index] = newItem
+        })
+        onChange(newList)
+      }
+    },
+    [list, onChange],
+  )
 
-  const handleRemove = useCallback((index: number) => {
-    return () => {
-      const newList = produce(list, (draft: any) => {
-        draft.splice(index, 1)
-      })
-      onChange(newList)
-    }
-  }, [list, onChange])
+  const handleRemove = useCallback(
+    (index: number) => {
+      return () => {
+        const newList = produce(list, (draft) => {
+          draft.splice(index, 1)
+        })
+        onChange(newList)
+      }
+    },
+    [list, onChange],
+  )
+
+  if (!Array.isArray(list)) return null
 
   return (
-    <div className='border border-gray-200 rounded-lg overflow-hidden'>
-      <div className='flex items-center h-7 leading-7 text-xs font-medium text-gray-500 uppercase'>
-        <div className='w-1/2 h-full pl-3 border-r border-gray-200'>{t(`${i18nPrefix}.key`)}</div>
-        <div className='flex w-1/2 h-full pl-3 pr-1 items-center justify-between'>
-          <div>{t(`${i18nPrefix}.value`)}</div>
-          {/* {!readonly && (
-            <TooltipPlus
-              popupContent={t(`${i18nPrefix}.bulkEdit`)}
-            >
-              <div
-                className='p-1 cursor-pointer rounded-md hover:bg-black/5 text-gray-500 hover:text-gray-800'
-                onClick={onSwitchToBulkEdit}
-              >
-                <EditList className='w-3 h-3' />
-              </div>
-            </TooltipPlus>)} */}
+    <div className="overflow-hidden rounded-lg border border-divider-regular">
+      <div
+        className={cn(
+          'flex h-7 items-center system-xs-medium-uppercase leading-7 text-text-tertiary',
+        )}
+      >
+        <div
+          className={cn(
+            'flex h-full items-center border-r border-divider-regular pl-3',
+            isSupportFile ? 'w-35' : 'w-1/2',
+          )}
+        >
+          {t(($) => $[`${i18nPrefix}.key`], { ns: 'workflowIntegrations' })}
+        </div>
+        {isSupportFile && (
+          <div className="flex h-full w-17.5 shrink-0 items-center border-r border-divider-regular pl-3">
+            {t(($) => $[`${i18nPrefix}.type`], { ns: 'workflowIntegrations' })}
+          </div>
+        )}
+        <div
+          className={cn(
+            'flex h-full items-center justify-between pr-1 pl-3',
+            isSupportFile ? 'grow' : 'w-1/2',
+          )}
+        >
+          {t(($) => $[`${i18nPrefix}.value`], { ns: 'workflowIntegrations' })}
         </div>
       </div>
-      {
-        list.map((item, index) => (
-          <KeyValueItem
-            key={item.id}
-            instanceId={item.id!}
-            nodeId={nodeId}
-            payload={item}
-            onChange={handleChange(index)}
-            onRemove={handleRemove(index)}
-            isLastItem={index === list.length - 1}
-            onAdd={onAdd}
-            readonly={readonly}
-            canRemove={list.length > 1}
-          />
-        ))
-      }
+      {list.map((item, index) => (
+        <KeyValueItem
+          key={item.id}
+          instanceId={item.id!}
+          nodeId={nodeId}
+          payload={item}
+          onChange={handleChange(index)}
+          onRemove={handleRemove(index)}
+          isLastItem={index === list.length - 1}
+          onAdd={onAdd}
+          readonly={readonly}
+          canRemove={list.length > 1}
+          isSupportFile={isSupportFile}
+          keyNotSupportVar={keyNotSupportVar}
+          insertVarTipToLeft={insertVarTipToLeft}
+        />
+      ))}
     </div>
   )
 }

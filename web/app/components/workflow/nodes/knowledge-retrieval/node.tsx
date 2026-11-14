@@ -1,50 +1,55 @@
-import { type FC, useEffect, useRef, useState } from 'react'
-import React from 'react'
+import type { DatasetDetailWithPartialMembersResponse } from '@dify/contracts/api/console/datasets/types.gen'
+import type { FC } from 'react'
 import type { KnowledgeRetrievalNodeType } from './types'
-import { Folder } from '@/app/components/base/icons/src/vender/solid/files'
 import type { NodeProps } from '@/app/components/workflow/types'
-import { fetchDatasets } from '@/service/datasets'
-import type { DataSet } from '@/models/datasets'
+import * as React from 'react'
+import { useEffect, useState } from 'react'
+import AppIcon from '@/app/components/base/app-icon'
+import { useDatasetsDetailStore } from '../../datasets-detail-store/store'
 
-const Node: FC<NodeProps<KnowledgeRetrievalNodeType>> = ({
-  data,
-}) => {
-  const [selectedDatasets, setSelectedDatasets] = useState<DataSet[]>([])
-  const updateTime = useRef(0)
+const Node: FC<NodeProps<KnowledgeRetrievalNodeType>> = ({ data }) => {
+  const [selectedDatasets, setSelectedDatasets] = useState<
+    DatasetDetailWithPartialMembersResponse[]
+  >([])
+  const datasetsDetail = useDatasetsDetailStore((s) => s.datasetsDetail)
+
   useEffect(() => {
-    (async () => {
-      updateTime.current = updateTime.current + 1
-      const currUpdateTime = updateTime.current
+    if (data.dataset_ids?.length > 0) {
+      const dataSetsWithDetail = data.dataset_ids.reduce<DatasetDetailWithPartialMembersResponse[]>(
+        (acc, id) => {
+          if (datasetsDetail[id]) acc.push(datasetsDetail[id])
+          return acc
+        },
+        [],
+      )
+      setSelectedDatasets(dataSetsWithDetail)
+    } else {
+      setSelectedDatasets([])
+    }
+  }, [data.dataset_ids, datasetsDetail])
 
-      if (data.dataset_ids?.length > 0) {
-        const { data: dataSetsWithDetail } = await fetchDatasets({ url: '/datasets', params: { page: 1, ids: data.dataset_ids } })
-        //  avoid old data overwrite new data
-        if (currUpdateTime < updateTime.current)
-          return
-        setSelectedDatasets(dataSetsWithDetail)
-      }
-      else {
-        setSelectedDatasets([])
-      }
-    })()
-  }, [data.dataset_ids])
-
-  if (!selectedDatasets.length)
-    return null
+  if (!selectedDatasets.length) return null
 
   return (
-    <div className='mb-1 px-3 py-1'>
-      <div className='space-y-0.5'>
-        {selectedDatasets.map(({ id, name }) => (
-          <div key={id} className='flex items-center h-[26px] bg-gray-100 rounded-md  px-1 text-xs font-normal text-gray-700'>
-            <div className='mr-1 shrink-0 p-1 bg-[#F5F8FF] rounded-md border-[0.5px] border-[#E0EAFF]'>
-              <Folder className='w-3 h-3 text-[#444CE7]' />
+    <div className="mb-1 px-3 py-1">
+      <div className="space-y-0.5">
+        {selectedDatasets.map(({ id, name, icon_info }) => {
+          const iconInfo = icon_info || {
+            icon: '📙',
+            icon_type: 'emoji' as const,
+            icon_background: '#FFF4ED',
+            icon_url: '',
+          }
+          return (
+            <div
+              key={id}
+              className="flex h-6.5 items-center gap-x-1 rounded-md bg-workflow-block-parma-bg px-1"
+            >
+              <AppIcon size="xs" className="shrink-0" icon={iconInfo} />
+              <div className="w-0 grow truncate system-xs-regular text-text-secondary">{name}</div>
             </div>
-            <div className='grow w-0 text-xs font-normal text-gray-700 truncate'>
-              {name}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

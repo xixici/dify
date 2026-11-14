@@ -1,0 +1,116 @@
+import type { FC, SubmitEventHandler } from 'react'
+import type { CreateExternalAPIReq, FormSchema } from '../declarations'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Field, FieldError } from '@langgenius/dify-ui/field'
+import { Form } from '@langgenius/dify-ui/form'
+import { Input } from '@langgenius/dify-ui/input'
+import { RiBookOpenLine } from '@remixicon/react'
+import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+import { useDocLink } from '@/context/i18n'
+
+type ExternalAPIFormProps = {
+  id: string
+  onSubmit: SubmitEventHandler<HTMLFormElement>
+  className?: string
+  itemClassName?: string
+  fieldLabelClassName?: string
+  value: CreateExternalAPIReq
+  onChange: (val: CreateExternalAPIReq) => void
+  formSchemas: FormSchema[]
+  inputClassName?: string
+  errors?: Partial<Record<'api_key' | 'endpoint' | 'name', string>>
+}
+
+const ExternalAPIForm: FC<ExternalAPIFormProps> = React.memo(
+  ({
+    id,
+    onSubmit,
+    className,
+    itemClassName,
+    fieldLabelClassName,
+    value,
+    onChange,
+    formSchemas,
+    inputClassName,
+    errors,
+  }) => {
+    const { t, i18n } = useTranslation(['common', 'dataset'])
+    const docLink = useDocLink()
+
+    const handleFormChange = (key: string, val: string) => {
+      if (key === 'name') {
+        onChange({ ...value, [key]: val })
+      } else {
+        onChange({
+          ...value,
+          settings: {
+            ...value.settings,
+            [key]: val,
+          },
+        })
+      }
+    }
+
+    const renderField = (formSchema: FormSchema) => {
+      const { variable, type, label, required } = formSchema
+      const fieldValue =
+        variable === 'name'
+          ? value[variable]
+          : value.settings[variable as keyof typeof value.settings] || ''
+
+      return (
+        <Field key={variable} name={variable} className={cn(itemClassName, 'self-stretch')}>
+          <div className="flex w-full items-center justify-between">
+            <label
+              className={cn(fieldLabelClassName, 'system-sm-semibold text-text-secondary')}
+              htmlFor={variable}
+            >
+              {label[i18n.language] || label.en_US}
+              {required && <span className="ml-1 text-red-500">*</span>}
+            </label>
+            {variable === 'endpoint' && (
+              <a
+                href={docLink('/use-dify/knowledge/external-knowledge-api') || '/'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center body-xs-regular text-text-accent"
+              >
+                <RiBookOpenLine className="mr-1 size-3 text-text-accent" />
+                {t(($) => $.externalAPIPanelDocumentation, { ns: 'dataset' })}
+              </a>
+            )}
+          </div>
+          <Input
+            type={type === 'secret' ? 'password' : 'text'}
+            autoComplete="off"
+            inputMode={variable === 'endpoint' ? 'url' : undefined}
+            placeholder={t(($) => $['placeholder.input'], { ns: 'common' })}
+            spellCheck={variable === 'endpoint' || type === 'secret' ? false : undefined}
+            id={variable}
+            value={fieldValue}
+            onChange={(val) => handleFormChange(variable, val.target.value)}
+            required={required}
+            className={cn(inputClassName)}
+          />
+          <FieldError />
+        </Field>
+      )
+    }
+
+    return (
+      <Form
+        id={id}
+        errors={errors}
+        onSubmit={onSubmit}
+        className={cn('flex flex-col items-start justify-center gap-4 self-stretch', className)}
+      >
+        {formSchemas.map((formSchema) => renderField(formSchema))}
+      </Form>
+    )
+  },
+)
+
+ExternalAPIForm.displayName = 'ExternalAPIForm'
+
+export default ExternalAPIForm

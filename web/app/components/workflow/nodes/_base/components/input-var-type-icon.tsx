@@ -1,31 +1,42 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
+import {
+  RiAlignLeft,
+  RiBracesLine,
+  RiCheckboxLine,
+  RiCheckboxMultipleLine,
+  RiFileCopy2Line,
+  RiFileList2Line,
+  RiHashtag,
+  RiTextSnippet,
+} from '@remixicon/react'
+import * as React from 'react'
 import { InputVarType } from '../../../types'
-import { AlignLeft, LetterSpacing01 } from '@/app/components/base/icons/src/vender/line/editor'
-import { CheckDone01, Hash02 } from '@/app/components/base/icons/src/vender/line/general'
 
-type Props = {
+type Props = Readonly<{
   className?: string
   type: InputVarType
-}
+}>
 
 const getIcon = (type: InputVarType) => {
-  return ({
-    [InputVarType.textInput]: LetterSpacing01,
-    [InputVarType.paragraph]: AlignLeft,
-    [InputVarType.select]: CheckDone01,
-    [InputVarType.number]: Hash02,
-  } as any)[type] || LetterSpacing01
+  return (
+    (
+      {
+        [InputVarType.textInput]: RiTextSnippet,
+        [InputVarType.paragraph]: RiAlignLeft,
+        [InputVarType.select]: RiCheckboxMultipleLine,
+        [InputVarType.number]: RiHashtag,
+        [InputVarType.checkbox]: RiCheckboxLine,
+        [InputVarType.jsonObject]: RiBracesLine,
+        [InputVarType.singleFile]: RiFileList2Line,
+        [InputVarType.multiFiles]: RiFileCopy2Line,
+      } as any
+    )[type] || RiTextSnippet
+  )
 }
 
-const InputVarTypeIcon: FC<Props> = ({
-  className,
-  type,
-}) => {
+const InputVarTypeIcon: FC<Props> = ({ className, type }) => {
   const Icon = getIcon(type)
-  return (
-    <Icon className={className} />
-  )
+  return <Icon className={className} />
 }
 export default React.memo(InputVarTypeIcon)

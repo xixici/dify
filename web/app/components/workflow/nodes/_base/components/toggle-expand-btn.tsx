@@ -1,25 +1,35 @@
 'use client'
 import type { FC } from 'react'
-import React, { useCallback } from 'react'
-import { Expand04 } from '@/app/components/base/icons/src/vender/solid/arrows'
-import { Collapse04 } from '@/app/components/base/icons/src/vender/line/arrows'
+import { cn } from '@langgenius/dify-ui/cn'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import * as React from 'react'
+import { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 
-type Props = {
+type Props = Readonly<{
   isExpand: boolean
   onExpandChange: (isExpand: boolean) => void
-}
+}>
 
-const ExpandBtn: FC<Props> = ({
-  isExpand,
-  onExpandChange,
-}) => {
+const ExpandBtn: FC<Props> = ({ isExpand, onExpandChange }) => {
+  const { t } = useTranslation(['share'])
   const handleToggle = useCallback(() => {
     onExpandChange(!isExpand)
-  }, [isExpand])
+  }, [isExpand, onExpandChange])
 
-  const Icon = isExpand ? Collapse04 : Expand04
   return (
-    <Icon className='w-3.5 h-3.5 text-gray-500 cursor-pointer' onClick={handleToggle} />
+    <IconButton
+      aria-label={t(($) => $[isExpand ? 'chat.collapse' : 'chat.expand'], { ns: 'share' })}
+      onClick={handleToggle}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          'size-4',
+          isExpand ? 'i-ri-collapse-diagonal-line' : 'i-ri-expand-diagonal-line',
+        )}
+      />
+    </IconButton>
   )
 }
 export default React.memo(ExpandBtn)

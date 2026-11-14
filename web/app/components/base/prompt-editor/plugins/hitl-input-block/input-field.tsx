@@ -1,0 +1,437 @@
+import type { HotkeyChord } from '@tanstack/react-hotkeys'
+import type { Item as TypeSelectItem } from '@/app/components/app/configuration/config-var/config-modal/type-select'
+import type {
+  FormInputItem,
+  ParagraphFormInput,
+  StringDefault,
+} from '@/app/components/workflow/nodes/human-input/types'
+import type { UploadFileSetting, ValueSelector } from '@/app/components/workflow/types'
+import { Button } from '@langgenius/dify-ui/button'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Input } from '@langgenius/dify-ui/input'
+import { Kbd, KbdGroup } from '@langgenius/dify-ui/kbd'
+import { formatForDisplay, useHotkey } from '@tanstack/react-hotkeys'
+import { produce } from 'immer'
+import * as React from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import TypeSelector from '@/app/components/app/configuration/config-var/config-modal/type-select'
+import ConfigSelect from '@/app/components/app/configuration/config-var/config-select'
+import FileUploadSetting from '@/app/components/workflow/nodes/_base/components/file-upload-setting'
+import VarReferencePicker from '@/app/components/workflow/nodes/_base/components/variable/var-reference-picker'
+import {
+  createDefaultFormInputByType,
+  createDefaultParagraphFormInput,
+  isFileFormInput,
+  isFileListFormInput,
+  isParagraphFormInput,
+  isSelectFormInput,
+} from '@/app/components/workflow/nodes/human-input/types'
+import { InputVarType, VarType } from '@/app/components/workflow/types'
+import PrePopulate from './pre-populate'
+import TypeSwitch from './type-switch'
+
+const SAVE_HOTKEY = 'Mod+Enter' satisfies HotkeyChord
+
+const i18nPrefix = 'nodes.humanInput.insertInputField'
+
+type InputFieldProps = {
+  nodeId: string
+  isEdit: boolean
+  payload?: FormInputItem
+  unavailableVariableNames?: string[]
+  onChange: (newPayload: FormInputItem) => void
+  onCancel: () => void
+}
+const InputField: React.FC<InputFieldProps> = ({
+  nodeId,
+  isEdit,
+  payload,
+  unavailableVariableNames = [],
+  onChange,
+  onCancel,
+}) => {
+  const rootRef = useRef<HTMLFormElement>(null)
+  const outputVariableNameInputId = React.useId()
+  const optionsErrorId = React.useId()
+  const { t } = useTranslation(['appDebug', 'common', 'workflow', 'workflowHumanInput'])
+  const [tempPayload, setTempPayload] = useState<FormInputItem>(
+    () => payload || createDefaultParagraphFormInput(),
+  )
+  const fieldTypeItems = useMemo<TypeSelectItem[]>(() => {
+    return [
+      {
+        name: t(($) => $['variableConfig.paragraph'], { ns: 'appDebug' }),
+        value: InputVarType.paragraph,
+      },
+      {
+        name: t(($) => $['variableConfig.select'], { ns: 'appDebug' }),
+        value: InputVarType.select,
+      },
+      {
+        name: t(($) => $['variableConfig.single-file'], { ns: 'appDebug' }),
+        value: InputVarType.singleFile,
+      },
+      {
+        name: t(($) => $['variableConfig.multi-files'], { ns: 'appDebug' }),
+        value: InputVarType.multiFiles,
+      },
+    ]
+  }, [t])
+  const paragraphPayload = useMemo<ParagraphFormInput>(() => {
+    if (isParagraphFormInput(tempPayload)) {
+      return {
+        ...tempPayload,
+        default: tempPayload.default || createDefaultParagraphFormInput().default,
+      }
+    }
+
+    return createDefaultParagraphFormInput(tempPayload.output_variable_name)
+  }, [tempPayload])
+  const unavailableVariableNameSet = useMemo(() => {
+    return new Set(unavailableVariableNames.map((name) => name.trim()).filter(Boolean))
+  }, [unavailableVariableNames])
+  const variableNameError = useMemo(() => {
+    const name = tempPayload.output_variable_name
+    if (!name.trim()) return null
+    if (!/^[a-z_]\w{0,29}$/i.test(name)) return 'variableNameInvalid'
+    if (unavailableVariableNameSet.has(name)) return 'variableNameDuplicated'
+    return null
+  }, [tempPayload.output_variable_name, unavailableVariableNameSet])
+  const nameValid = useMemo(() => {
+    return !!tempPayload.output_variable_name.trim() && !variableNameError
+  }, [tempPayload.output_variable_name, variableNameError])
+
+  let optionsError = ''
+  if (isSelectFormInput(tempPayload) && tempPayload.option_source.type === 'constant') {
+    const options = tempPayload.option_source.value.map((option) => option.trim())
+    const blankOptionIndex = options.findIndex((option) => !option)
+    if (options.length === 0) {
+      optionsError = t(($) => $['variableConfig.errorMsg.atLeastOneOption'], { ns: 'appDebug' })
+    } else if (blankOptionIndex !== -1) {
+      const label = t(($) => $['variableConfig.options'], { ns: 'appDebug' })
+      optionsError = t(($) => $['errorMsg.fieldRequired'], {
+        ns: 'common',
+        field: `${label} ${blankOptionIndex + 1}`,
+      })
+    } else if (new Set(options).size !== options.length) {
+      optionsError = t(($) => $['variableConfig.errorMsg.optionRepeat'], { ns: 'appDebug' })
+    }
+  }
+
+  const handleSave = useCallback(() => {
+    if (!nameValid || optionsError) return
+    if (isFileListFormInput(tempPayload)) {
+      const value = tempPayload.number_limits ?? 5
+      if (!Number.isFinite(value)) {
+        onChange({
+          ...tempPayload,
+          number_limits: 1,
+        })
+        return
+      }
+    }
+    onChange(tempPayload)
+  }, [nameValid, onChange, optionsError, tempPayload])
+  const handleTypeChange = useCallback((item: TypeSelectItem) => {
+    setTempPayload((prev) =>
+      createDefaultFormInputByType(item.value as FormInputItem['type'], prev.output_variable_name),
+    )
+  }, [])
+  const handleDefaultValueChange = useCallback(
+    (key: keyof StringDefault) => {
+      return (value: ValueSelector | string) => {
+        const nextValue = produce(paragraphPayload, (draft) => {
+          if (key === 'selector') {
+            draft.default.type = 'variable'
+            draft.default.selector = value as ValueSelector
+          } else if (key === 'value') {
+            draft.default.type = 'constant'
+            draft.default.value = value as string
+          } else if (key === 'type') {
+            draft.default.type = value as 'constant' | 'variable'
+          }
+        })
+        setTempPayload(nextValue)
+      }
+    },
+    [paragraphPayload],
+  )
+  const handleSelectOptionsChange = useCallback((options: string[]) => {
+    setTempPayload((prev) => {
+      if (!isSelectFormInput(prev)) return prev
+
+      return {
+        ...prev,
+        option_source: {
+          ...prev.option_source,
+          type: 'constant',
+          value: options,
+        },
+      }
+    })
+  }, [])
+  const handleSelectOptionSourceTypeChange = useCallback((isVariable: boolean) => {
+    setTempPayload((prev) => {
+      if (!isSelectFormInput(prev)) return prev
+
+      return {
+        ...prev,
+        option_source: {
+          ...prev.option_source,
+          type: isVariable ? 'variable' : 'constant',
+        },
+      }
+    })
+  }, [])
+  const handleSelectOptionSourceSelectorChange = useCallback((selector: ValueSelector | string) => {
+    setTempPayload((prev) => {
+      if (!isSelectFormInput(prev)) return prev
+
+      return {
+        ...prev,
+        option_source: {
+          ...prev.option_source,
+          type: 'variable',
+          selector: selector as ValueSelector,
+        },
+      }
+    })
+  }, [])
+  const handleFilePayloadChange = useCallback((payload: UploadFileSetting) => {
+    setTempPayload((prev) => {
+      if (!isFileFormInput(prev)) return prev
+
+      return {
+        ...prev,
+        allowed_file_extensions: payload.allowed_file_extensions || [],
+        allowed_file_types: payload.allowed_file_types,
+        allowed_file_upload_methods: payload.allowed_file_upload_methods,
+      }
+    })
+  }, [])
+  const handleFileListPayloadChange = useCallback((payload: UploadFileSetting) => {
+    setTempPayload((prev) => {
+      if (!isFileListFormInput(prev)) return prev
+
+      return {
+        ...prev,
+        allowed_file_extensions: payload.allowed_file_extensions || [],
+        allowed_file_types: payload.allowed_file_types,
+        allowed_file_upload_methods: payload.allowed_file_upload_methods,
+        number_limits: payload.max_length,
+      }
+    })
+  }, [])
+
+  // Let child React handlers commit their input before claiming the field shortcut.
+  useHotkey(
+    SAVE_HOTKEY,
+    (event) => {
+      if (
+        event.defaultPrevented ||
+        event.isComposing ||
+        !(event.target instanceof Node) ||
+        !rootRef.current?.contains(event.target)
+      )
+        return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.repeat) return
+      rootRef.current?.requestSubmit()
+    },
+    {
+      enabled: nameValid,
+      ignoreInputs: false,
+      preventDefault: false,
+      stopPropagation: false,
+    },
+  )
+
+  return (
+    // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- The form handles bubbling Enter after child inputs handle their own keys.
+    <form
+      ref={rootRef}
+      className="flex max-h-(--shortcut-popup-max-height,80dvh) w-93 max-w-full flex-col overflow-hidden rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg-blur shadow-lg backdrop-blur-[5px]"
+      onSubmit={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        handleSave()
+      }}
+      onKeyDown={(event) => {
+        // Preserve Mod+Enter as the save shortcut while editing a field.
+        if (
+          event.key === 'Enter' &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.nativeEvent.isComposing &&
+          event.target instanceof HTMLInputElement &&
+          event.target.form === event.currentTarget
+        )
+          event.preventDefault()
+      }}
+    >
+      <div className="shrink-0 p-3 pb-2">
+        <div className="system-md-semibold text-text-primary">
+          {t(($) => $[`${i18nPrefix}.title`], { ns: 'workflowHumanInput' })}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-3 pt-0 pb-0">
+        <div className="mt-3">
+          <TypeSelector
+            label={t(($) => $[`${i18nPrefix}.fieldType`], { ns: 'workflowHumanInput' })}
+            labelClassName="mb-1.5 system-xs-medium"
+            value={tempPayload.type}
+            items={fieldTypeItems}
+            onSelect={handleTypeChange}
+          />
+        </div>
+        <div className="mt-3">
+          <label
+            htmlFor={outputVariableNameInputId}
+            className="block system-xs-medium text-text-secondary"
+          >
+            {t(($) => $[`${i18nPrefix}.saveResponseAs`], { ns: 'workflowHumanInput' })}
+            <span className="relative system-xs-regular text-text-destructive-secondary">*</span>
+          </label>
+          <Input
+            id={outputVariableNameInputId}
+            className="mt-1.5"
+            placeholder={t(($) => $[`${i18nPrefix}.saveResponseAsPlaceholder`], {
+              ns: 'workflowHumanInput',
+            })}
+            value={tempPayload.output_variable_name}
+            onChange={(e) => {
+              setTempPayload((prev) => ({ ...prev, output_variable_name: e.target.value }))
+            }}
+            // oxlint-disable-next-line jsx-a11y/no-autofocus -- The field appears in a dialog opened by an explicit edit action and is the primary editing target.
+            autoFocus
+          />
+          {tempPayload.output_variable_name && variableNameError && (
+            <div className="mt-1 px-1 system-xs-regular text-text-destructive-secondary">
+              {t(($) => $[`${i18nPrefix}.${variableNameError}`], { ns: 'workflowHumanInput' })}
+            </div>
+          )}
+        </div>
+        {isParagraphFormInput(tempPayload) && (
+          <div className="mt-4">
+            <div className="mb-1.5 system-xs-medium text-text-secondary">
+              {t(($) => $[`${i18nPrefix}.prePopulateField`], { ns: 'workflowHumanInput' })}
+            </div>
+            <PrePopulate
+              isVariable={paragraphPayload.default.type === 'variable'}
+              onIsVariableChange={(isVariable) => {
+                handleDefaultValueChange('type')(isVariable ? 'variable' : 'constant')
+              }}
+              nodeId={nodeId}
+              valueSelector={paragraphPayload.default.selector}
+              onValueSelectorChange={handleDefaultValueChange('selector')}
+              value={paragraphPayload.default.value}
+              onValueChange={handleDefaultValueChange('value')}
+            />
+          </div>
+        )}
+        {isSelectFormInput(tempPayload) && (
+          <div className="mt-4">
+            <div className="mb-1.5 system-xs-medium text-text-secondary">
+              {t(($) => $[`${i18nPrefix}.options`], { ns: 'workflowHumanInput' })}
+            </div>
+            {tempPayload.option_source.type === 'variable' ? (
+              <div className="relative min-h-20 rounded-lg border border-transparent bg-components-input-bg-normal px-3 pt-2 pb-8">
+                <VarReferencePicker
+                  nodeId={nodeId}
+                  value={tempPayload.option_source.selector}
+                  onChange={handleSelectOptionSourceSelectorChange}
+                  readonly={false}
+                  isJustShowValue
+                  filterVar={(varPayload) => varPayload.type === VarType.arrayString}
+                />
+                <TypeSwitch
+                  className="absolute inset-s-1.5 bottom-1"
+                  isVariable
+                  onIsVariableChange={handleSelectOptionSourceTypeChange}
+                />
+              </div>
+            ) : (
+              <div
+                className={cn(
+                  'rounded-lg border border-transparent bg-components-input-bg-normal p-2',
+                )}
+              >
+                <ConfigSelect
+                  options={tempPayload.option_source.value}
+                  onChange={handleSelectOptionsChange}
+                  errorMessage={optionsError}
+                  errorId={optionsErrorId}
+                />
+                {optionsError && (
+                  <div
+                    id={optionsErrorId}
+                    role="alert"
+                    className="mt-1 px-1 system-xs-regular text-text-destructive-secondary"
+                  >
+                    {optionsError}
+                  </div>
+                )}
+                <TypeSwitch
+                  className="mt-2"
+                  isVariable={false}
+                  onIsVariableChange={handleSelectOptionSourceTypeChange}
+                />
+              </div>
+            )}
+          </div>
+        )}
+        {isFileFormInput(tempPayload) && (
+          <div className="mt-4">
+            <FileUploadSetting
+              payload={{
+                ...tempPayload,
+                max_length: 1,
+              }}
+              isMultiple={false}
+              onChange={handleFilePayloadChange}
+            />
+          </div>
+        )}
+        {isFileListFormInput(tempPayload) && (
+          <div className="mt-4">
+            <FileUploadSetting
+              payload={{
+                ...tempPayload,
+                max_length: tempPayload.number_limits || 5,
+              }}
+              isMultiple
+              onChange={handleFileListPayloadChange}
+            />
+          </div>
+        )}
+      </div>
+      <div className="shrink-0 bg-components-panel-bg p-3">
+        <div className="flex justify-end space-x-2">
+          <Button type="button" onClick={onCancel}>
+            {t(($) => $['operation.cancel'], { ns: 'common' })}
+          </Button>
+          {isEdit ? (
+            <Button type="submit" variant="primary" disabled={!nameValid}>
+              {t(($) => $['operation.save'], { ns: 'common' })}
+            </Button>
+          ) : (
+            <Button type="submit" className="flex" variant="primary" disabled={!nameValid}>
+              <span>{t(($) => $[`${i18nPrefix}.insert`], { ns: 'workflowHumanInput' })}</span>
+              <KbdGroup>
+                {formatForDisplay(SAVE_HOTKEY, { parts: true }).map((key) => (
+                  <Kbd key={key} color="white">
+                    {key}
+                  </Kbd>
+                ))}
+              </KbdGroup>
+            </Button>
+          )}
+        </div>
+      </div>
+    </form>
+  )
+}
+
+export default InputField

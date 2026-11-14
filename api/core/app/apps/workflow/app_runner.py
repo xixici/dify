@@ -1,96 +1,193 @@
 import logging
-import os
-from typing import Optional, cast
+import time
+from collections.abc import Sequence
+from typing import cast, override
 
 from core.app.apps.base_app_queue_manager import AppQueueManager
+from core.app.apps.execution_coordinator import app_task_command_channel_key
 from core.app.apps.workflow.app_config_manager import WorkflowAppConfig
-from core.app.apps.workflow.workflow_event_trigger_callback import WorkflowEventTriggerCallback
-from core.app.apps.workflow_logging_callback import WorkflowLoggingCallback
+from core.app.apps.workflow.command_channels import (
+    CelerySignalCommandChannel,
+    CombinedCommandChannel,
+    StopFlagCommandChannel,
+)
+from core.app.apps.workflow.stop_aware_ready_queue import attach_stop_aware_ready_queue
+from core.app.apps.workflow_app_runner import PreparedWorkflowRun, WorkflowBasedAppRunner, WorkflowRunDriver
 from core.app.entities.app_invoke_entities import (
     InvokeFrom,
     WorkflowAppGenerateEntity,
+    get_credit_usage_app_type,
 )
-from core.workflow.entities.node_entities import SystemVariable
-from core.workflow.nodes.base_node import UserFrom
-from core.workflow.workflow_engine_manager import WorkflowEngineManager
-from extensions.ext_database import db
-from models.model import App, EndUser
+from core.workflow.node_factory import get_default_root_node_id
+from core.workflow.snippet_start import get_compatible_start_aliases
+from core.workflow.system_variables import build_bootstrap_variables, build_system_variables
+from core.workflow.variable_pool_initializer import add_node_inputs_to_pool, add_variables_to_pool
+from core.workflow.workflow_entry import WorkflowEntry
+from extensions.ext_redis import redis_client
+from extensions.workflow_warm_shutdown import WORKFLOW_WARM_SHUTDOWN_ABORT_REASON, celery_warm_shutdown_started
+from graphon.engine.command import RedisChannel
+from graphon.engine.filter import ResponseStreamFilter
+from graphon.engine.layer import Layer
+from graphon.enums import WorkflowType
+from graphon.runtime import RuntimeState, VariablePool
+from graphon.variable_loader import VariableLoader
+from libs.datetime_utils import naive_utc_now
 from models.workflow import Workflow
 
 logger = logging.getLogger(__name__)
 
 
-class WorkflowAppRunner:
+class WorkflowAppRunner(WorkflowBasedAppRunner):
     """
     Workflow Application Runner
     """
 
-    def run(self, application_generate_entity: WorkflowAppGenerateEntity,
-            queue_manager: AppQueueManager) -> None:
-        """
-        Run application
-        :param application_generate_entity: application generate entity
-        :param queue_manager: application queue manager
-        :return:
-        """
-        app_config = application_generate_entity.app_config
-        app_config = cast(WorkflowAppConfig, app_config)
-
-        user_id = None
-        if application_generate_entity.invoke_from in [InvokeFrom.WEB_APP, InvokeFrom.SERVICE_API]:
-            end_user = db.session.query(EndUser).filter(EndUser.id == application_generate_entity.user_id).first()
-            if end_user:
-                user_id = end_user.session_id
-        else:
-            user_id = application_generate_entity.user_id
-
-        app_record = db.session.query(App).filter(App.id == app_config.app_id).first()
-        if not app_record:
-            raise ValueError("App not found")
-
-        workflow = self.get_workflow(app_model=app_record, workflow_id=app_config.workflow_id)
-        if not workflow:
-            raise ValueError("Workflow not initialized")
-
-        inputs = application_generate_entity.inputs
-        files = application_generate_entity.files
-
-        db.session.close()
-
-        workflow_callbacks = [WorkflowEventTriggerCallback(
+    def __init__(
+        self,
+        *,
+        application_generate_entity: WorkflowAppGenerateEntity,
+        queue_manager: AppQueueManager,
+        variable_loader: VariableLoader,
+        workflow: Workflow,
+        system_user_id: str,
+        root_node_id: str | None = None,
+        execution_driver: WorkflowRunDriver | None = None,
+        graph_engine_layers: Sequence[Layer] = (),
+        graph_runtime_state: RuntimeState | None = None,
+        response_stream_filter: ResponseStreamFilter | None = None,
+    ):
+        super().__init__(
             queue_manager=queue_manager,
-            workflow=workflow
-        )]
+            execution_driver=execution_driver,
+            variable_loader=variable_loader,
+            app_id=application_generate_entity.app_config.app_id,
+            graph_engine_layers=graph_engine_layers,
+        )
+        self.application_generate_entity = application_generate_entity
+        self._workflow = workflow
+        self._sys_user_id = system_user_id
+        self._root_node_id = root_node_id
+        self._resume_graph_runtime_state = graph_runtime_state
+        self._response_stream_filter = response_stream_filter
 
-        if bool(os.environ.get("DEBUG", 'False').lower() == 'true'):
-            workflow_callbacks.append(WorkflowLoggingCallback())
+    @override
+    def prepare(self) -> PreparedWorkflowRun | None:
+        """Prepare graph execution and passive application observers."""
+        app_config = self.application_generate_entity.app_config
+        app_config = cast(WorkflowAppConfig, app_config)
+        invoke_from = self.application_generate_entity.invoke_from
+        # if only single iteration or single loop run is requested
+        if self.application_generate_entity.single_iteration_run or self.application_generate_entity.single_loop_run:
+            invoke_from = InvokeFrom.DEBUGGER
+        user_from = self.application_generate_entity.user_from
+
+        resume_state = self._resume_graph_runtime_state
+
+        if resume_state is not None:
+            graph_runtime_state = resume_state
+            variable_pool = graph_runtime_state.variable_pool
+            graph = self._init_graph(
+                graph_config=self._workflow.graph_dict,
+                graph_runtime_state=graph_runtime_state,
+                workflow_id=self._workflow.id,
+                tenant_id=self._workflow.tenant_id,
+                user_id=self.application_generate_entity.user_id,
+                user_from=user_from,
+                invoke_from=invoke_from,
+                root_node_id=self._root_node_id,
+                app_type=get_credit_usage_app_type(app_config.app_mode),
+                trace_session_id=self.application_generate_entity.extras.get("trace_session_id"),
+                call_depth=self.application_generate_entity.call_depth,
+            )
+        elif self.application_generate_entity.single_iteration_run or self.application_generate_entity.single_loop_run:
+            graph, variable_pool, graph_runtime_state = self._prepare_single_node_execution(
+                workflow=self._workflow,
+                single_iteration_run=self.application_generate_entity.single_iteration_run,
+                single_loop_run=self.application_generate_entity.single_loop_run,
+                user_id=self.application_generate_entity.user_id,
+                app_type=get_credit_usage_app_type(app_config.app_mode),
+                trace_session_id=self.application_generate_entity.extras.get("trace_session_id"),
+            )
+        else:
+            inputs = self.application_generate_entity.inputs
+
+            # Create a variable pool.
+            system_inputs = build_system_variables(
+                files=self.application_generate_entity.files,
+                user_id=self._sys_user_id,
+                app_id=app_config.app_id,
+                timestamp=int(naive_utc_now().timestamp()),
+                workflow_id=app_config.workflow_id,
+                workflow_execution_id=self.application_generate_entity.workflow_execution_id,
+            )
+            variable_pool = VariablePool()
+            add_variables_to_pool(
+                variable_pool,
+                build_bootstrap_variables(
+                    system_variables=system_inputs,
+                    environment_variables=self._workflow.environment_variables,
+                ),
+            )
+            root_node_id = self._root_node_id or get_default_root_node_id(self._workflow.graph_dict)
+            add_node_inputs_to_pool(
+                variable_pool,
+                node_id=root_node_id,
+                inputs=inputs,
+                aliases=get_compatible_start_aliases(
+                    workflow_kind=getattr(self._workflow, "kind_or_standard", None),
+                    root_node_id=root_node_id,
+                ),
+            )
+
+            graph_runtime_state = RuntimeState(
+                workflow_id=self._workflow.id, variable_pool=variable_pool, start_at=time.perf_counter()
+            )
+            graph = self._init_graph(
+                graph_config=self._workflow.graph_dict,
+                graph_runtime_state=graph_runtime_state,
+                workflow_id=self._workflow.id,
+                tenant_id=self._workflow.tenant_id,
+                user_id=self.application_generate_entity.user_id,
+                user_from=user_from,
+                invoke_from=invoke_from,
+                root_node_id=root_node_id,
+                app_type=get_credit_usage_app_type(app_config.app_mode),
+                trace_session_id=self.application_generate_entity.extras.get("trace_session_id"),
+                call_depth=self.application_generate_entity.call_depth,
+            )
 
         # RUN WORKFLOW
-        workflow_engine_manager = WorkflowEngineManager()
-        workflow_engine_manager.run_workflow(
-            workflow=workflow,
-            user_id=application_generate_entity.user_id,
-            user_from=UserFrom.ACCOUNT
-            if application_generate_entity.invoke_from in [InvokeFrom.EXPLORE, InvokeFrom.DEBUGGER]
-            else UserFrom.END_USER,
-            user_inputs=inputs,
-            system_inputs={
-                SystemVariable.FILES: files,
-                SystemVariable.USER_ID: user_id
-            },
-            callbacks=workflow_callbacks
+        # Create Redis command channel for this workflow execution
+        task_id = self.application_generate_entity.task_id
+        channel_key = app_task_command_channel_key(task_id)
+        celery_signal_channel = CelerySignalCommandChannel(
+            shutdown_state_getter=celery_warm_shutdown_started,
+            abort_reason=WORKFLOW_WARM_SHUTDOWN_ABORT_REASON,
+        )
+        attach_stop_aware_ready_queue(graph_runtime_state, task_id=task_id)
+        command_channel = CombinedCommandChannel(
+            (
+                RedisChannel(redis_client, channel_key),
+                StopFlagCommandChannel(task_id=task_id),
+                celery_signal_channel,
+            )
         )
 
-    def get_workflow(self, app_model: App, workflow_id: str) -> Optional[Workflow]:
-        """
-        Get workflow
-        """
-        # fetch workflow by workflow_id
-        workflow = db.session.query(Workflow).filter(
-            Workflow.tenant_id == app_model.tenant_id,
-            Workflow.app_id == app_model.id,
-            Workflow.id == workflow_id
-        ).first()
+        self._queue_manager.graph_runtime_state = graph_runtime_state
 
-        # return workflow
-        return workflow
+        workflow_entry = WorkflowEntry(
+            graph=graph,
+            graph_config=self._workflow.graph_dict,
+            call_depth=self.application_generate_entity.call_depth,
+            graph_runtime_state=graph_runtime_state,
+            command_channel=command_channel,
+            response_stream_filter=self._response_stream_filter,
+        )
+
+        return PreparedWorkflowRun(
+            entry=workflow_entry,
+            application_layers=self._graph_engine_layers,
+            generate_entity=self.application_generate_entity,
+            workflow_type=WorkflowType(self._workflow.type),
+            workflow_version=self._workflow.version,
+        )

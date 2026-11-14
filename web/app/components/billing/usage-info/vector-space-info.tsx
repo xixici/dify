@@ -1,33 +1,41 @@
 'use client'
 import type { FC } from 'react'
-import React from 'react'
+import { useSuspenseQueries } from '@tanstack/react-query'
+import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArtificialBrain } from '../../base/icons/src/vender/line/development'
+import { consoleQuery } from '@/service/console'
+import { getVectorSpaceQuota } from '../quota'
 import UsageInfo from '../usage-info'
-import { useProviderContext } from '@/context/provider-context'
 
-type Props = {
+type Props = Readonly<{
   className?: string
-}
+}>
 
-const VectorSpaceInfo: FC<Props> = ({
-  className,
-}) => {
-  const { t } = useTranslation()
-  const { plan } = useProviderContext()
-  const {
-    usage,
-    total,
-  } = plan
+const VectorSpaceInfo: FC<Props> = ({ className }) => {
+  const { t } = useTranslation(['billing'])
+  const [{ data: plan }, { data: vectorSpace }] = useSuspenseQueries({
+    queries: [
+      consoleQuery.features.get.queryOptions({
+        select: (features) => features.billing.subscription.plan,
+      }),
+      consoleQuery.features.vectorSpace.get.queryOptions(),
+    ],
+  })
+
   return (
     <UsageInfo
       className={className}
-      Icon={ArtificialBrain}
-      name={t('billing.plansCommon.vectorSpace')}
-      tooltip={t('billing.plansCommon.vectorSpaceTooltip') as string}
-      usage={usage.vectorSpace}
-      total={total.vectorSpace}
-      unit='MB'
+      iconClassName="i-ri-hard-drive-3-line"
+      name={t(($) => $['usagePage.vectorSpace'], { ns: 'billing' })}
+      tooltip={t(($) => $['usagePage.vectorSpaceTooltip'], { ns: 'billing' }) as string}
+      quota={getVectorSpaceQuota(vectorSpace)}
+      unit="MB"
+      unitPosition="inline"
+      storageMode
+      storageThreshold={50}
+      storageTooltip={t(($) => $['usagePage.storageThresholdTooltip'], { ns: 'billing' }) as string}
+      isSandboxPlan={plan === 'sandbox'}
+      usageUnknown={vectorSpace.usage_unknown}
     />
   )
 }

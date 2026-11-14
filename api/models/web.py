@@ -1,38 +1,65 @@
-from sqlalchemy.dialects.postgresql import UUID
+from datetime import datetime
+from uuid import uuid4
 
-from extensions.ext_database import db
-from models.model import Message
+import sqlalchemy as sa
+from sqlalchemy import DateTime, func, select
+from sqlalchemy.orm import Mapped, Session, mapped_column
+
+from .base import TypeBase
+from .enums import CreatorUserRole
+from .model import Message
+from .types import EnumText, StringUUID
 
 
-class SavedMessage(db.Model):
-    __tablename__ = 'saved_messages'
+class SavedMessage(TypeBase):
+    __tablename__ = "saved_messages"
     __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='saved_message_pkey'),
-        db.Index('saved_message_message_idx', 'app_id', 'message_id', 'created_by_role', 'created_by'),
+        sa.PrimaryKeyConstraint("id", name="saved_message_pkey"),
+        sa.Index("saved_message_message_idx", "app_id", "message_id", "created_by_role", "created_by"),
+        sa.Index("saved_message_message_id_idx", "message_id"),
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    app_id = db.Column(UUID, nullable=False)
-    message_id = db.Column(UUID, nullable=False)
-    created_by_role = db.Column(db.String(255), nullable=False, server_default=db.text("'end_user'::character varying"))
-    created_by = db.Column(UUID, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-
-    @property
-    def message(self):
-        return db.session.query(Message).filter(Message.id == self.message_id).first()
-
-
-class PinnedConversation(db.Model):
-    __tablename__ = 'pinned_conversations'
-    __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='pinned_conversation_pkey'),
-        db.Index('pinned_conversation_conversation_idx', 'app_id', 'conversation_id', 'created_by_role', 'created_by'),
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    message_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    created_by_role: Mapped[CreatorUserRole] = mapped_column(
+        EnumText(CreatorUserRole, length=255), nullable=False, server_default=sa.text("'end_user'")
+    )
+    created_by: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        init=False,
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    app_id = db.Column(UUID, nullable=False)
-    conversation_id = db.Column(UUID, nullable=False)
-    created_by_role = db.Column(db.String(255), nullable=False, server_default=db.text("'end_user'::character varying"))
-    created_by = db.Column(UUID, nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
+    def message(self, session: Session) -> Message | None:
+        return session.scalar(select(Message).where(Message.id == self.message_id))
+
+
+class PinnedConversation(TypeBase):
+    __tablename__ = "pinned_conversations"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="pinned_conversation_pkey"),
+        sa.Index("pinned_conversation_conversation_idx", "app_id", "conversation_id", "created_by_role", "created_by"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    app_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    conversation_id: Mapped[str] = mapped_column(StringUUID)
+    created_by_role: Mapped[CreatorUserRole] = mapped_column(
+        EnumText(CreatorUserRole, length=255),
+        nullable=False,
+        server_default=sa.text("'end_user'"),
+    )
+    created_by: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=func.current_timestamp(),
+        init=False,
+    )

@@ -1,44 +1,85 @@
-import type { FC } from 'react'
 import type {
-  Model,
-  ModelProvider,
-} from '../declarations'
+  ModelProviderSummaryResponse,
+  ProviderWithModelsResponse,
+} from '@dify/contracts/api/console/workspaces/types.gen'
+import type { FC } from 'react'
+import type { ModelProvider } from '../declarations'
+import type { ModelSelectorProvider } from '../model-selector/types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { useResolvedTheme } from '@/features/theme/hooks'
+import { renderI18nObject } from '@/i18n/metadata'
 import { useLanguage } from '../hooks'
-import { CubeOutline } from '@/app/components/base/icons/src/vender/line/shapes'
-import { OpenaiViolet } from '@/app/components/base/icons/src/public/llm'
 
 type ModelIconProps = {
-  provider?: Model | ModelProvider
+  provider?:
+    | ProviderWithModelsResponse
+    | ModelProvider
+    | ModelProviderSummaryResponse
+    | ModelSelectorProvider
   modelName?: string
   className?: string
+  iconClassName?: string
+  isDeprecated?: boolean
 }
 const ModelIcon: FC<ModelIconProps> = ({
   provider,
   className,
   modelName,
+  iconClassName,
+  isDeprecated = false,
 }) => {
+  const theme = useResolvedTheme()
   const language = useLanguage()
+  const lightIconUrl = provider?.icon_small ? renderI18nObject(provider.icon_small, language) : ''
+  const darkIconUrl = provider?.icon_small_dark
+    ? renderI18nObject(provider.icon_small_dark, language)
+    : ''
+  const iconUrl = theme === 'dark' ? darkIconUrl || lightIconUrl : lightIconUrl
 
-  if (provider?.provider === 'openai' && modelName?.startsWith('gpt-4'))
-    return <OpenaiViolet className={`w-4 h-4 ${className}`}/>
-
-  if (provider?.icon_small) {
+  if (
+    provider?.provider &&
+    ['openai', 'langgenius/openai/openai'].includes(provider.provider) &&
+    modelName?.startsWith('o')
+  )
     return (
-      <img
-        alt='model-icon'
-        src={`${provider.icon_small[language] || provider.icon_small.en_US}?_token=${localStorage.getItem('console_token')}`}
-        className={`w-4 h-4 ${className}`}
-      />
+      <span className="flex items-center justify-center">
+        <span aria-hidden className={cn('i-custom-public-llm-openai-yellow size-5', className)} />
+      </span>
+    )
+
+  if (iconUrl) {
+    return (
+      <span
+        className={cn(
+          'flex size-5 items-center justify-center',
+          isDeprecated && 'opacity-50',
+          className,
+        )}
+      >
+        <img
+          alt=""
+          className={iconClassName}
+          decoding="async"
+          height={20}
+          loading="lazy"
+          src={iconUrl}
+          width={20}
+        />
+      </span>
     )
   }
 
   return (
-    <div className={`
-      flex items-center justify-center w-6 h-6 rounded border-[0.5px] border-black/5 bg-gray-50
-      ${className}
-    `}>
-      <CubeOutline className='w-4 h-4 text-gray-400' />
-    </div>
+    <span
+      className={cn(
+        'flex h-5 w-5 items-center justify-center rounded-md border-[0.5px] border-components-panel-border-subtle bg-background-default-subtle',
+        className,
+      )}
+    >
+      <span className={cn('flex size-5 items-center justify-center opacity-35', iconClassName)}>
+        <span aria-hidden className="i-custom-vender-other-group size-3 text-text-tertiary" />
+      </span>
+    </span>
   )
 }
 

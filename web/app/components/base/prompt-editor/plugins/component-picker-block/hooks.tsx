@@ -1,112 +1,223 @@
-import { useMemo } from 'react'
-import { useTranslation } from 'react-i18next'
-import { $insertNodes } from 'lexical'
-import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
 import type {
   ContextBlockType,
+  CurrentBlockType,
+  ErrorMessageBlockType,
   ExternalToolBlockType,
   HistoryBlockType,
+  LastRunBlockType,
   QueryBlockType,
+  RequestURLBlockType,
   VariableBlockType,
   WorkflowVariableBlockType,
 } from '../../types'
+import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext'
+import { RiGlobalLine } from '@remixicon/react'
+import { $insertNodes } from 'lexical'
+import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
+import AppIcon from '@/app/components/base/app-icon'
+import { VarType } from '@/app/components/workflow/types'
 import { INSERT_CONTEXT_BLOCK_COMMAND } from '../context-block'
+import { $createCustomTextNode } from '../custom-text/node'
 import { INSERT_HISTORY_BLOCK_COMMAND } from '../history-block'
 import { INSERT_QUERY_BLOCK_COMMAND } from '../query-block'
+import { INSERT_REQUEST_URL_BLOCK_COMMAND } from '../request-url-block'
 import { INSERT_VARIABLE_VALUE_BLOCK_COMMAND } from '../variable-block'
-import { $createCustomTextNode } from '../custom-text/node'
-import { PromptOption } from './prompt-option'
-import { VariableOption } from './variable-option'
-import { File05 } from '@/app/components/base/icons/src/vender/solid/files'
-import {
-  MessageClockCircle,
-  Tool03,
-} from '@/app/components/base/icons/src/vender/solid/general'
-import { BracketsX } from '@/app/components/base/icons/src/vender/line/development'
-import { UserEdit02 } from '@/app/components/base/icons/src/vender/solid/users'
-import { ArrowUpRight } from '@/app/components/base/icons/src/vender/line/arrows'
-import AppIcon from '@/app/components/base/app-icon'
+import { PickerBlockMenuOption } from './menu'
+import { PromptMenuItem } from './prompt-option'
+import { VariableMenuItem } from './variable-option'
 
 export const usePromptOptions = (
   contextBlock?: ContextBlockType,
   queryBlock?: QueryBlockType,
   historyBlock?: HistoryBlockType,
+  requestURLBlock?: RequestURLBlockType,
 ) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common'])
   const [editor] = useLexicalComposerContext()
 
-  return useMemo(() => {
-    return [
-      ...contextBlock?.show
-        ? [
-          new PromptOption(t('common.promptEditor.context.item.title'), {
-            icon: <File05 className='w-4 h-4 text-[#6938EF]' />,
-            onSelect: () => {
-              if (!contextBlock?.selectable)
-                return
-              editor.dispatchCommand(INSERT_CONTEXT_BLOCK_COMMAND, undefined)
-            },
-            disabled: !contextBlock?.selectable,
-          }),
-        ]
-        : [],
-      ...queryBlock?.show
-        ? [
-          new PromptOption(t('common.promptEditor.query.item.title'), {
-            icon: <UserEdit02 className='w-4 h-4 text-[#FD853A]' />,
-            onSelect: () => {
-              if (!queryBlock?.selectable)
-                return
-              editor.dispatchCommand(INSERT_QUERY_BLOCK_COMMAND, undefined)
-            },
-            disabled: !queryBlock?.selectable,
-          }),
-        ]
-        : [],
-      ...historyBlock?.show
-        ? [
-          new PromptOption(t('common.promptEditor.history.item.title'), {
-            icon: <MessageClockCircle className='w-4 h-4 text-[#DD2590]' />,
-            onSelect: () => {
-              if (!historyBlock?.selectable)
-                return
-              editor.dispatchCommand(INSERT_HISTORY_BLOCK_COMMAND, undefined)
-            },
-            disabled: !historyBlock?.selectable,
-          }),
-        ]
-        : [],
-    ]
-  }, [contextBlock, editor, historyBlock, queryBlock, t])
+  const promptOptions: PickerBlockMenuOption[] = []
+  if (contextBlock?.show) {
+    promptOptions.push(
+      new PickerBlockMenuOption({
+        key: t(($) => $['promptEditor.context.item.title'], { ns: 'common' }),
+        group: 'prompt context',
+        render: ({ isSelected, onSelect, onSetHighlight }) => {
+          return (
+            <PromptMenuItem
+              title={t(($) => $['promptEditor.context.item.title'], { ns: 'common' })}
+              icon={
+                <span
+                  aria-hidden
+                  className="i-custom-vender-solid-files-file-05 h-4 w-4 text-[#6938EF]"
+                />
+              }
+              disabled={!contextBlock.selectable}
+              isSelected={isSelected}
+              onClick={onSelect}
+              onMouseEnter={onSetHighlight}
+            />
+          )
+        },
+        onSelect: () => {
+          if (!contextBlock?.selectable) return
+          editor.dispatchCommand(INSERT_CONTEXT_BLOCK_COMMAND, undefined)
+        },
+      }),
+    )
+  }
+
+  if (queryBlock?.show) {
+    promptOptions.push(
+      new PickerBlockMenuOption({
+        key: t(($) => $['promptEditor.query.item.title'], { ns: 'common' }),
+        group: 'prompt query',
+        render: ({ isSelected, onSelect, onSetHighlight }) => {
+          return (
+            <PromptMenuItem
+              title={t(($) => $['promptEditor.query.item.title'], { ns: 'common' })}
+              icon={
+                <span
+                  aria-hidden
+                  className="i-custom-vender-solid-users-user-edit-02 h-4 w-4 text-[#FD853A]"
+                />
+              }
+              disabled={!queryBlock.selectable}
+              isSelected={isSelected}
+              onClick={onSelect}
+              onMouseEnter={onSetHighlight}
+            />
+          )
+        },
+        onSelect: () => {
+          if (!queryBlock?.selectable) return
+          editor.dispatchCommand(INSERT_QUERY_BLOCK_COMMAND, undefined)
+        },
+      }),
+    )
+  }
+
+  if (requestURLBlock?.show) {
+    promptOptions.push(
+      new PickerBlockMenuOption({
+        key: t(($) => $['promptEditor.requestURL.item.title'], { ns: 'common' }),
+        group: 'request URL',
+        render: ({ isSelected, onSelect, onSetHighlight }) => {
+          return (
+            <PromptMenuItem
+              title={t(($) => $['promptEditor.requestURL.item.title'], { ns: 'common' })}
+              icon={<RiGlobalLine className="size-4 text-util-colors-violet-violet-600" />}
+              disabled={!requestURLBlock.selectable}
+              isSelected={isSelected}
+              onClick={onSelect}
+              onMouseEnter={onSetHighlight}
+            />
+          )
+        },
+        onSelect: () => {
+          if (!requestURLBlock?.selectable) return
+          editor.dispatchCommand(INSERT_REQUEST_URL_BLOCK_COMMAND, undefined)
+        },
+      }),
+    )
+  }
+
+  if (historyBlock?.show) {
+    promptOptions.push(
+      new PickerBlockMenuOption({
+        key: t(($) => $['promptEditor.history.item.title'], { ns: 'common' }),
+        group: 'prompt history',
+        render: ({ isSelected, onSelect, onSetHighlight }) => {
+          return (
+            <PromptMenuItem
+              title={t(($) => $['promptEditor.history.item.title'], { ns: 'common' })}
+              icon={
+                <span
+                  aria-hidden
+                  className="i-custom-vender-solid-general-message-clock-circle h-4 w-4 text-[#DD2590]"
+                />
+              }
+              disabled={!historyBlock.selectable}
+              isSelected={isSelected}
+              onClick={onSelect}
+              onMouseEnter={onSetHighlight}
+            />
+          )
+        },
+        onSelect: () => {
+          if (!historyBlock?.selectable) return
+          editor.dispatchCommand(INSERT_HISTORY_BLOCK_COMMAND, undefined)
+        },
+      }),
+    )
+  }
+  return promptOptions
 }
 
 export const useVariableOptions = (
   variableBlock?: VariableBlockType,
   queryString?: string,
-) => {
-  const { t } = useTranslation()
+): PickerBlockMenuOption[] => {
+  const { t } = useTranslation(['common'])
   const [editor] = useLexicalComposerContext()
 
   const options = useMemo(() => {
-    const baseOptions = (variableBlock?.variables || []).map((item) => {
-      return new VariableOption(item.value, {
-        icon: <BracketsX className='w-[14px] h-[14px] text-[#2970FF]' />,
+    if (!variableBlock?.variables) return []
+
+    const baseOptions = variableBlock.variables.map((item) => {
+      return new PickerBlockMenuOption({
+        key: item.value,
+        group: 'prompt variable',
+        render: ({ queryString, isSelected, onSelect, onSetHighlight }) => {
+          return (
+            <VariableMenuItem
+              title={item.value}
+              icon={
+                <span
+                  aria-hidden
+                  className="i-custom-vender-line-development-brackets-x h-3.5 w-3.5 text-text-accent"
+                />
+              }
+              queryString={queryString}
+              isSelected={isSelected}
+              onClick={onSelect}
+              onMouseEnter={onSetHighlight}
+            />
+          )
+        },
         onSelect: () => {
           editor.dispatchCommand(INSERT_VARIABLE_VALUE_BLOCK_COMMAND, `{{${item.value}}}`)
         },
       })
     })
-    if (!queryString)
-      return baseOptions
+    if (!queryString) return baseOptions
 
-    const regex = new RegExp(queryString, 'i')
-
-    return baseOptions.filter(option => regex.test(option.title) || option.keywords.some(keyword => regex.test(keyword)))
+    return baseOptions.filter((option) =>
+      option.key.toLowerCase().includes(queryString.toLowerCase()),
+    )
   }, [editor, queryString, variableBlock])
 
   const addOption = useMemo(() => {
-    return new VariableOption(t('common.promptEditor.variable.modal.add'), {
-      icon: <BracketsX className='mr-2 w-[14px] h-[14px] text-[#2970FF]' />,
+    return new PickerBlockMenuOption({
+      key: t(($) => $['promptEditor.variable.modal.add'], { ns: 'common' }),
+      group: 'prompt variable',
+      render: ({ queryString, isSelected, onSelect, onSetHighlight }) => {
+        return (
+          <VariableMenuItem
+            title={t(($) => $['promptEditor.variable.modal.add'], { ns: 'common' })}
+            icon={
+              <span
+                aria-hidden
+                className="i-custom-vender-line-development-brackets-x h-3.5 w-3.5 text-text-accent"
+              />
+            }
+            queryString={queryString}
+            isSelected={isSelected}
+            onClick={onSelect}
+            onMouseEnter={onSetHighlight}
+          />
+        )
+      },
       onSelect: () => {
         editor.update(() => {
           const prefixNode = $createCustomTextNode('{{')
@@ -127,40 +238,69 @@ export const useExternalToolOptions = (
   externalToolBlockType?: ExternalToolBlockType,
   queryString?: string,
 ) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation(['common'])
   const [editor] = useLexicalComposerContext()
 
   const options = useMemo(() => {
-    const baseToolOptions = (externalToolBlockType?.externalTools || []).map((item) => {
-      return new VariableOption(item.name, {
-        icon: (
-          <AppIcon
-            className='!w-[14px] !h-[14px]'
-            icon={item.icon}
-            background={item.icon_background}
-          />
-        ),
-        extraElement: <div className='text-xs text-gray-400'>{item.variableName}</div>,
+    if (!externalToolBlockType?.externalTools) return []
+    const baseToolOptions = externalToolBlockType.externalTools.map((item) => {
+      return new PickerBlockMenuOption({
+        key: item.name,
+        group: 'external tool',
+        render: ({ queryString, isSelected, onSelect, onSetHighlight }) => {
+          return (
+            <VariableMenuItem
+              title={item.name}
+              icon={<AppIcon className="h-3.5! w-3.5!" icon={item} />}
+              extraElement={<span className="text-xs text-text-tertiary">{item.variableName}</span>}
+              queryString={queryString}
+              isSelected={isSelected}
+              onClick={onSelect}
+              onMouseEnter={onSetHighlight}
+            />
+          )
+        },
         onSelect: () => {
           editor.dispatchCommand(INSERT_VARIABLE_VALUE_BLOCK_COMMAND, `{{${item.variableName}}}`)
         },
       })
     })
-    if (!queryString)
-      return baseToolOptions
+    if (!queryString) return baseToolOptions
 
-    const regex = new RegExp(queryString, 'i')
-
-    return baseToolOptions.filter(option => regex.test(option.title) || option.keywords.some(keyword => regex.test(keyword)))
+    return baseToolOptions.filter((option) =>
+      option.key.toLowerCase().includes(queryString.toLowerCase()),
+    )
   }, [editor, queryString, externalToolBlockType])
 
   const addOption = useMemo(() => {
-    return new VariableOption(t('common.promptEditor.variable.modal.addTool'), {
-      icon: <Tool03 className='mr-2 w-[14px] h-[14px] text-[#444CE7]' />,
-      extraElement: <ArrowUpRight className='w-3 h-3 text-gray-400' />,
+    return new PickerBlockMenuOption({
+      key: t(($) => $['promptEditor.variable.modal.addTool'], { ns: 'common' }),
+      group: 'external tool',
+      render: ({ queryString, isSelected, onSelect, onSetHighlight }) => {
+        return (
+          <VariableMenuItem
+            title={t(($) => $['promptEditor.variable.modal.addTool'], { ns: 'common' })}
+            icon={
+              <span
+                aria-hidden
+                className="i-custom-vender-solid-general-tool-03 h-3.5 w-3.5 text-text-accent"
+              />
+            }
+            extraElement={
+              <span
+                aria-hidden
+                className="i-custom-vender-line-arrows-arrow-up-right size-3 text-text-tertiary"
+              />
+            }
+            queryString={queryString}
+            isSelected={isSelected}
+            onClick={onSelect}
+            onMouseEnter={onSetHighlight}
+          />
+        )
+      },
       onSelect: () => {
-        if (externalToolBlockType?.onAddExternalTool)
-          externalToolBlockType.onAddExternalTool()
+        externalToolBlockType?.onAddExternalTool?.()
       },
     })
   }, [externalToolBlockType, t])
@@ -177,25 +317,73 @@ export const useOptions = (
   variableBlock?: VariableBlockType,
   externalToolBlockType?: ExternalToolBlockType,
   workflowVariableBlockType?: WorkflowVariableBlockType,
+  requestURLBlock?: RequestURLBlockType,
+  currentBlockType?: CurrentBlockType,
+  errorMessageBlockType?: ErrorMessageBlockType,
+  lastRunBlockType?: LastRunBlockType,
   queryString?: string,
 ) => {
-  const promptOptions = usePromptOptions(contextBlock, queryBlock, historyBlock)
+  const promptOptions = usePromptOptions(contextBlock, queryBlock, historyBlock, requestURLBlock)
   const variableOptions = useVariableOptions(variableBlock, queryString)
   const externalToolOptions = useExternalToolOptions(externalToolBlockType, queryString)
-  const workflowVariableOptions = useMemo(() => {
-    if (!workflowVariableBlockType?.show)
-      return []
 
-    return workflowVariableBlockType.variables || []
-  }, [workflowVariableBlockType])
+  const workflowVariableOptions = useMemo(() => {
+    if (!workflowVariableBlockType?.show) return []
+    const res = [...(workflowVariableBlockType.variables || [])]
+    if (errorMessageBlockType?.show && res.findIndex((v) => v.nodeId === 'error_message') === -1) {
+      res.unshift({
+        nodeId: 'error_message',
+        title: 'error_message',
+        isFlat: true,
+        vars: [
+          {
+            variable: 'error_message',
+            type: VarType.string,
+          },
+        ],
+      })
+    }
+    if (lastRunBlockType?.show && res.findIndex((v) => v.nodeId === 'last_run') === -1) {
+      res.unshift({
+        nodeId: 'last_run',
+        title: 'last_run',
+        isFlat: true,
+        vars: [
+          {
+            variable: 'last_run',
+            type: VarType.object,
+          },
+        ],
+      })
+    }
+    if (currentBlockType?.show && res.findIndex((v) => v.nodeId === 'current') === -1) {
+      const title = currentBlockType.generatorType === 'prompt' ? 'current_prompt' : 'current_code'
+      res.unshift({
+        nodeId: 'current',
+        title,
+        isFlat: true,
+        vars: [
+          {
+            variable: 'current',
+            type: VarType.string,
+          },
+        ],
+      })
+    }
+    return res
+  }, [
+    workflowVariableBlockType?.show,
+    workflowVariableBlockType?.variables,
+    errorMessageBlockType?.show,
+    lastRunBlockType?.show,
+    currentBlockType?.show,
+    currentBlockType?.generatorType,
+  ])
 
   return useMemo(() => {
     return {
-      promptOptions,
-      variableOptions,
-      externalToolOptions,
       workflowVariableOptions,
-      allOptions: [...promptOptions, ...variableOptions, ...externalToolOptions],
+      allFlattenOptions: [...promptOptions, ...variableOptions, ...externalToolOptions],
     }
   }, [promptOptions, variableOptions, externalToolOptions, workflowVariableOptions])
 }

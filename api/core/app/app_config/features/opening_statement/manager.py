@@ -1,23 +1,24 @@
+from typing import Any
 
 
 class OpeningStatementConfigManager:
     @classmethod
-    def convert(cls, config: dict) -> tuple[str, list]:
+    def convert(cls, config: dict[str, Any]) -> tuple[str, list[str]]:
         """
         Convert model config to model config
 
         :param config: model config args
         """
         # opening statement
-        opening_statement = config.get('opening_statement')
+        opening_statement = config.get("opening_statement", "")
 
         # suggested questions
-        suggested_questions_list = config.get('suggested_questions')
+        suggested_questions_list = config.get("suggested_questions", [])
 
         return opening_statement, suggested_questions_list
 
     @classmethod
-    def validate_and_set_defaults(cls, config: dict) -> tuple[dict, list[str]]:
+    def validate_and_set_defaults(cls, config: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
         """
         Validate and set defaults for opening statement feature
 

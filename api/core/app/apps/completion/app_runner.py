@@ -1,17 +1,25 @@
 import logging
 from typing import cast
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from core.app.apps.base_app_queue_manager import AppQueueManager
 from core.app.apps.base_app_runner import AppRunner
 from core.app.apps.completion.app_config_manager import CompletionAppConfig
 from core.app.entities.app_invoke_entities import (
     CompletionAppGenerateEntity,
+    get_credit_usage_app_type,
+    get_credit_usage_created_by,
 )
 from core.callback_handler.index_tool_callback_handler import DatasetIndexToolCallbackHandler
-from core.model_manager import ModelInstance
-from core.moderation.base import ModerationException
+from core.db.session_factory import create_session
+from core.model_manager import ModelManager
+from core.moderation.base import ModerationError
 from core.rag.retrieval.dataset_retrieval import DatasetRetrieval
-from extensions.ext_database import db
+from graphon.file import File
+from graphon.model_runtime.entities.message_entities import ImagePromptMessageContent
+from graphon.model_runtime.entities.model_entities import ModelType
 from models.model import App, Message
 
 logger = logging.getLogger(__name__)
@@ -22,11 +30,18 @@ class CompletionAppRunner(AppRunner):
     Completion Application Runner
     """
 
-    def run(self, application_generate_entity: CompletionAppGenerateEntity,
-            queue_manager: AppQueueManager,
-            message: Message) -> None:
-        """
-        Run application
+    def run(
+        self,
+        application_generate_entity: CompletionAppGenerateEntity,
+        queue_manager: AppQueueManager,
+        message: Message,
+        session: Session,
+    ):
+        """Run the application without retaining ``session`` during model I/O.
+
+        Database preparation is committed and the connection is released before
+        the provider response is requested or consumed.
+
         :param application_generate_entity: application generate entity
         :param queue_manager: application queue manager
         :param message: message
@@ -34,8 +49,11 @@ class CompletionAppRunner(AppRunner):
         """
         app_config = application_generate_entity.app_config
         app_config = cast(CompletionAppConfig, app_config)
-
-        app_record = db.session.query(App).filter(App.id == app_config.app_id).first()
+        stmt = select(App).where(App.id == app_config.app_id)
+        with create_session() as read_session:
+            app_record = read_session.scalar(stmt)
+            if app_record:
+                read_session.expunge(app_record)
         if not app_record:
             raise ValueError("App not found")
 
@@ -43,29 +61,26 @@ class CompletionAppRunner(AppRunner):
         query = application_generate_entity.query
         files = application_generate_entity.files
 
-        # Pre-calculate the number of tokens of the prompt messages,
-        # and return the rest number of tokens by model context token size limit and max token size limit.
-        # If the rest number of tokens is not enough, raise exception.
-        # Include: prompt template, inputs, query(optional), files(optional)
-        # Not Include: memory, external data, dataset context
-        self.get_pre_calculate_rest_tokens(
-            app_record=app_record,
-            model_config=application_generate_entity.model_config,
-            prompt_template_entity=app_config.prompt_template,
-            inputs=inputs,
-            files=files,
-            query=query
+        image_detail_config = (
+            application_generate_entity.file_upload_config.image_config.detail
+            if (
+                application_generate_entity.file_upload_config
+                and application_generate_entity.file_upload_config.image_config
+            )
+            else None
         )
+        image_detail_config = image_detail_config or ImagePromptMessageContent.DETAIL.LOW
 
         # organize all inputs and template to prompt messages
         # Include: prompt template, inputs, query(optional), files(optional)
         prompt_messages, stop = self.organize_prompt_messages(
             app_record=app_record,
-            model_config=application_generate_entity.model_config,
+            model_config=application_generate_entity.model_conf,
             prompt_template_entity=app_config.prompt_template,
             inputs=inputs,
             files=files,
-            query=query
+            query=query,
+            image_detail_config=image_detail_config,
         )
 
         # moderation
@@ -76,15 +91,16 @@ class CompletionAppRunner(AppRunner):
                 tenant_id=app_config.tenant_id,
                 app_generate_entity=application_generate_entity,
                 inputs=inputs,
-                query=query,
+                query=query or "",
+                message_id=message.id,
             )
-        except ModerationException as e:
+        except ModerationError as e:
             self.direct_output(
                 queue_manager=queue_manager,
                 app_generate_entity=application_generate_entity,
                 prompt_messages=prompt_messages,
                 text=str(e),
-                stream=application_generate_entity.stream
+                stream=application_generate_entity.stream,
             )
             return
 
@@ -96,86 +112,106 @@ class CompletionAppRunner(AppRunner):
                 app_id=app_record.id,
                 external_data_tools=external_data_tools,
                 inputs=inputs,
-                query=query
+                query=query,
             )
 
         # get context from datasets
         context = None
+        context_files: list[File] = []
         if app_config.dataset and app_config.dataset.dataset_ids:
             hit_callback = DatasetIndexToolCallbackHandler(
                 queue_manager,
                 app_record.id,
                 message.id,
                 application_generate_entity.user_id,
-                application_generate_entity.invoke_from
+                application_generate_entity.invoke_from,
             )
 
             dataset_config = app_config.dataset
             if dataset_config and dataset_config.retrieve_config.query_variable:
                 query = inputs.get(dataset_config.retrieve_config.query_variable, "")
 
-            dataset_retrieval = DatasetRetrieval()
-            context = dataset_retrieval.retrieve(
+            dataset_retrieval = DatasetRetrieval(application_generate_entity)
+            context, retrieved_files = dataset_retrieval.retrieve(
+                session=session,
                 app_id=app_record.id,
                 user_id=application_generate_entity.user_id,
                 tenant_id=app_record.tenant_id,
-                model_config=application_generate_entity.model_config,
+                model_config=application_generate_entity.model_conf,
                 config=dataset_config,
-                query=query,
+                query=query or "",
                 invoke_from=application_generate_entity.invoke_from,
-                show_retrieve_source=app_config.additional_features.show_retrieve_source,
-                hit_callback=hit_callback
+                show_retrieve_source=app_config.additional_features.show_retrieve_source
+                if app_config.additional_features
+                else False,
+                hit_callback=hit_callback,
+                message_id=message.id,
+                inputs=inputs,
+                vision_enabled=bool(
+                    application_generate_entity.app_config.app_model_config_dict.get("file_upload", {})
+                    .get("image", {})
+                    .get("enabled", False)
+                ),
             )
+            context_files = retrieved_files or []
+
+        session.commit()
+        session.close()
 
         # reorganize all inputs and template to prompt messages
         # Include: prompt template, inputs, query(optional), files(optional)
         #          memory(optional), external data, dataset context(optional)
         prompt_messages, stop = self.organize_prompt_messages(
             app_record=app_record,
-            model_config=application_generate_entity.model_config,
+            model_config=application_generate_entity.model_conf,
             prompt_template_entity=app_config.prompt_template,
             inputs=inputs,
             files=files,
             query=query,
-            context=context
+            context=context,
+            image_detail_config=image_detail_config,
+            context_files=context_files,
         )
 
         # check hosting moderation
         hosting_moderation_result = self.check_hosting_moderation(
             application_generate_entity=application_generate_entity,
             queue_manager=queue_manager,
-            prompt_messages=prompt_messages
+            prompt_messages=prompt_messages,
         )
 
         if hosting_moderation_result:
             return
 
         # Re-calculate the max tokens if sum(prompt_token +  max_tokens) over model token limit
-        self.recalc_llm_max_tokens(
-            model_config=application_generate_entity.model_config,
-            prompt_messages=prompt_messages
-        )
+        self.recalc_llm_max_tokens(model_config=application_generate_entity.model_conf, prompt_messages=prompt_messages)
 
         # Invoke model
-        model_instance = ModelInstance(
-            provider_model_bundle=application_generate_entity.model_config.provider_model_bundle,
-            model=application_generate_entity.model_config.model
+        model_instance = ModelManager.for_tenant(tenant_id=app_config.tenant_id).get_model_instance(
+            tenant_id=app_config.tenant_id,
+            provider=application_generate_entity.model_conf.provider,
+            model_type=ModelType.LLM,
+            model=application_generate_entity.model_conf.model,
         )
 
-        db.session.close()
+        request_metadata: dict[str, object] = {"app_id": app_config.app_id}
+        request_metadata["app_type"] = get_credit_usage_app_type(app_config.app_mode)
+        request_metadata["created_by"] = get_credit_usage_created_by(app_config.app_mode)
 
         invoke_result = model_instance.invoke_llm(
             prompt_messages=prompt_messages,
-            model_parameters=application_generate_entity.model_config.parameters,
+            model_parameters=application_generate_entity.model_conf.parameters,
             stop=stop,
             stream=application_generate_entity.stream,
-            user=application_generate_entity.user_id,
+            request_metadata=request_metadata,
         )
 
         # handle invoke result
         self._handle_invoke_result(
             invoke_result=invoke_result,
             queue_manager=queue_manager,
-            stream=application_generate_entity.stream
+            stream=application_generate_entity.stream,
+            message_id=message.id,
+            user_id=application_generate_entity.user_id,
+            tenant_id=app_config.tenant_id,
         )
-    

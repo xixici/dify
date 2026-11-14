@@ -1,66 +1,93 @@
-import type { FC } from 'react'
-import { useState } from 'react'
+import type { InputGroupInputProps } from '@langgenius/dify-ui/input-group'
+import type { ComponentProps, Ref } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@langgenius/dify-ui/input-group'
 import { useTranslation } from 'react-i18next'
-import cn from 'classnames'
-import { SearchLg } from '@/app/components/base/icons/src/vender/line/general'
-import { XCircle } from '@/app/components/base/icons/src/vender/solid/general'
+import { useSearchInput } from './use-search-input'
 
-type SearchInputProps = {
-  placeholder?: string
-  className?: string
-  value: string
-  onChange: (v: string) => void
-  white?: boolean
+type SearchInputClearProps = Pick<
+  ComponentProps<'button'>,
+  'className' | 'onClick' | 'onMouseDown' | 'tabIndex'
+> & {
+  'aria-label': string
 }
-const SearchInput: FC<SearchInputProps> = ({
-  placeholder,
-  className,
-  value,
-  onChange,
-  white,
-}) => {
-  const { t } = useTranslation()
-  const [focus, setFocus] = useState<boolean>(false)
 
+// Same look as dify-ui `ComboboxClear` and `MenuClear`; change all three together.
+// Spread `clearProps` from `useSearchInput` so the button stays out of the tab order and never
+// takes focus from the input.
+export function SearchInputClear({ className, ...props }: SearchInputClearProps) {
   return (
-    <div className={cn(
-      'group flex items-center px-2 h-8 rounded-lg bg-gray-200 hover:bg-gray-300 border border-transparent overflow-hidden',
-      focus && '!bg-white hover:bg-white shawdow-xs !border-gray-300',
-      !focus && value && 'hover:!bg-gray-200 hover:!shawdow-xs hover:!border-black/5',
-      white && '!bg-white hover:!bg-white shawdow-xs !border-gray-300 hover:!border-gray-300',
-      className,
-    )}>
-      <div className="pointer-events-none shrink-0 flex items-center mr-1.5 justify-center w-4 h-4">
-        <SearchLg className="h-3.5 w-3.5 text-gray-500" aria-hidden="true" />
-      </div>
-      <input
-        type="text"
-        name="query"
-        className={cn(
-          'grow block h-[18px] bg-gray-200 rounded-md border-0 text-gray-700 text-[13px] placeholder:text-gray-500 appearance-none outline-none group-hover:bg-gray-300 caret-blue-600',
-          focus && '!bg-white hover:bg-white group-hover:bg-white placeholder:!text-gray-400',
-          !focus && value && 'hover:!bg-gray-200 group-hover:!bg-gray-200',
-          white && '!bg-white hover:!bg-white group-hover:!bg-white placeholder:!text-gray-400',
-        )}
-        placeholder={placeholder || t('common.operation.search')!}
-        value={value}
-        onChange={(e) => {
-          onChange(e.target.value)
-        }}
-        onFocus={() => setFocus(true)}
-        onBlur={() => setFocus(false)}
-        autoComplete="off"
-      />
-      {value && (
-        <div
-          className='shrink-0 flex items-center justify-center w-4 h-4 cursor-pointer group/clear'
-          onClick={() => onChange('')}
-        >
-          <XCircle className='w-3.5 h-3.5 text-gray-400 group-hover/clear:text-gray-600' />
-        </div>
-      )}
-    </div>
+    <IconButton
+      size="sm"
+      className={cn('hover:bg-components-input-bg-hover', className)}
+      {...props}
+    >
+      <span className="i-ri-close-line size-4" aria-hidden="true" />
+    </IconButton>
   )
 }
 
-export default SearchInput
+type SearchInputProps = {
+  ref?: Ref<HTMLInputElement>
+  value: string
+  onValueChange: (value: string) => void
+  placeholder?: string
+  className?: string
+} & Pick<
+  InputGroupInputProps,
+  'aria-describedby' | 'aria-label' | 'autoFocus' | 'disabled' | 'name' | 'onKeyDown'
+>
+
+export function SearchInput({
+  ref,
+  placeholder,
+  className,
+  value,
+  onValueChange,
+  name = 'query',
+  autoFocus,
+  disabled,
+  onKeyDown,
+  'aria-describedby': ariaDescribedBy,
+  'aria-label': ariaLabel,
+}: SearchInputProps) {
+  const { t } = useTranslation(['common'])
+  const { inputProps, canClear, clearProps } = useSearchInput({ value, onValueChange, ref })
+
+  return (
+    <InputGroup className={className}>
+      <InputGroupInput
+        {...inputProps}
+        name={name}
+        aria-describedby={ariaDescribedBy}
+        aria-label={ariaLabel ?? t(($) => $['operation.search'], { ns: 'common' })}
+        placeholder={placeholder ?? t(($) => $['operation.search'], { ns: 'common' })}
+        disabled={disabled}
+        autoComplete="off"
+        // oxlint-disable-next-line jsx-a11y/no-autofocus -- The caller owns initial focus for its search surface.
+        autoFocus={autoFocus}
+        enterKeyHint="search"
+        onKeyDown={(event) => {
+          // The caller's handler runs after the searchbox has owned Escape.
+          inputProps.onKeyDown(event)
+          onKeyDown?.(event)
+        }}
+      />
+      <InputGroupAddon className="ps-1.75 pe-1.25">
+        <span
+          className="i-ri-search-line size-4 text-components-input-text-placeholder"
+          aria-hidden="true"
+        />
+      </InputGroupAddon>
+      {canClear && !disabled && (
+        <InputGroupAddon align="inline-end" className="ps-0.75 pe-1.25">
+          <SearchInputClear
+            {...clearProps}
+            aria-label={t(($) => $['operation.clear'], { ns: 'common' })}
+          />
+        </InputGroupAddon>
+      )}
+    </InputGroup>
+  )
+}

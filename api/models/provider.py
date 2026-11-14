@@ -1,74 +1,110 @@
-from enum import Enum
+from __future__ import annotations
 
-from sqlalchemy.dialects.postgresql import UUID
+from datetime import datetime
+from enum import StrEnum, auto
+from typing import override
+from uuid import uuid4
 
-from extensions.ext_database import db
+import sqlalchemy as sa
+from sqlalchemy import DateTime, String, func, text
+from sqlalchemy.orm import Mapped, foreign, mapped_column, relationship
+
+from graphon.model_runtime.entities.model_entities import ModelType
+from libs.uuid_utils import uuidv7
+
+from .base import TypeBase
+from .enums import CredentialSourceType, PaymentStatus, PermissionEnum, ProviderQuotaType
+from .types import EnumText, LongText, StringUUID
 
 
-class ProviderType(Enum):
-    CUSTOM = 'custom'
-    SYSTEM = 'system'
+class ProviderType(StrEnum):
+    CUSTOM = auto()
+    SYSTEM = auto()
 
     @staticmethod
-    def value_of(value):
+    def value_of(value: str) -> ProviderType:
         for member in ProviderType:
             if member.value == value:
                 return member
         raise ValueError(f"No matching enum found for value '{value}'")
 
 
-class ProviderQuotaType(Enum):
-    PAID = 'paid'
-    """hosted paid quota"""
-
-    FREE = 'free'
-    """third-party free quota"""
-
-    TRIAL = 'trial'
-    """hosted trial quota"""
-
-    @staticmethod
-    def value_of(value):
-        for member in ProviderQuotaType:
-            if member.value == value:
-                return member
-        raise ValueError(f"No matching enum found for value '{value}'")
-
-
-class Provider(db.Model):
+class Provider(TypeBase):
     """
     Provider model representing the API providers and their configurations.
     """
-    __tablename__ = 'providers'
+
+    __tablename__ = "providers"
     __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='provider_pkey'),
-        db.Index('provider_tenant_id_provider_idx', 'tenant_id', 'provider_name'),
-        db.UniqueConstraint('tenant_id', 'provider_name', 'provider_type', 'quota_type', name='unique_provider_name_type_quota')
+        sa.PrimaryKeyConstraint("id", name="provider_pkey"),
+        sa.Index("provider_tenant_id_provider_idx", "tenant_id", "provider_name"),
+        sa.UniqueConstraint(
+            "tenant_id", "provider_name", "provider_type", "quota_type", name="unique_provider_name_type_quota"
+        ),
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    tenant_id = db.Column(UUID, nullable=False)
-    provider_name = db.Column(db.String(40), nullable=False)
-    provider_type = db.Column(db.String(40), nullable=False, server_default=db.text("'custom'::character varying"))
-    encrypted_config = db.Column(db.Text, nullable=True)
-    is_valid = db.Column(db.Boolean, nullable=False, server_default=db.text('false'))
-    last_used = db.Column(db.DateTime, nullable=True)
+    id: Mapped[str] = mapped_column(
+        StringUUID,
+        primary_key=True,
+        insert_default=lambda: str(uuidv7()),
+        default_factory=lambda: str(uuidv7()),
+        init=False,
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_type: Mapped[ProviderType] = mapped_column(
+        EnumText(ProviderType, length=40), nullable=False, default=ProviderType.CUSTOM
+    )
+    is_valid: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    last_used: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, init=False)
+    credential_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True, default=None)
 
-    quota_type = db.Column(db.String(40), nullable=True, server_default=db.text("''::character varying"))
-    quota_limit = db.Column(db.BigInteger, nullable=True)
-    quota_used = db.Column(db.BigInteger, default=0)
+    quota_type: Mapped[ProviderQuotaType | None] = mapped_column(
+        EnumText(ProviderQuotaType, length=40), nullable=True, server_default=text("''"), default=None
+    )
+    quota_limit: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True, default=None)
+    quota_used: Mapped[int | None] = mapped_column(sa.BigInteger, nullable=True, default=0)
 
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )
+    # The active credential row, or None when credential_id is unset or the row was deleted.
+    # lazy="raise" keeps reads from opening a session: callers load it with selectinload in their own session.
+    credential: Mapped[ProviderCredential | None] = relationship(
+        lambda: ProviderCredential,
+        primaryjoin=lambda: foreign(Provider.credential_id) == ProviderCredential.id,
+        lazy="raise",
+        viewonly=True,
+        init=False,
+        compare=False,
+    )
 
+    @override
     def __repr__(self):
-        return f"<Provider(id={self.id}, tenant_id={self.tenant_id}, provider_name='{self.provider_name}', provider_type='{self.provider_type}')>"
+        return (
+            f"<Provider(id={self.id}, tenant_id={self.tenant_id}, provider_name='{self.provider_name}',"
+            f" provider_type='{self.provider_type}')>"
+        )
+
+    @property
+    def credential_name(self):
+        # Records without credential_id, such as newly created system records, never need the relationship loaded.
+        credential = self.credential if self.credential_id else None
+        return credential.credential_name if credential else None
+
+    @property
+    def encrypted_config(self):
+        credential = self.credential if self.credential_id else None
+        return credential.encrypted_config if credential else None
 
     @property
     def token_is_set(self):
         """
-         Returns True if the encrypted_config is not None, indicating that the token is set.
-         """
+        Returns True if the encrypted_config is not None, indicating that the token is set.
+        """
         return self.encrypted_config is not None
 
     @property
@@ -76,85 +112,240 @@ class Provider(db.Model):
         """
         Returns True if the provider is enabled.
         """
-        if self.provider_type == ProviderType.SYSTEM.value:
+        if self.provider_type == ProviderType.SYSTEM:
             return self.is_valid
         else:
             return self.is_valid and self.token_is_set
 
 
-class ProviderModel(db.Model):
+class ProviderModel(TypeBase):
     """
     Provider model representing the API provider_models and their configurations.
     """
-    __tablename__ = 'provider_models'
+
+    __tablename__ = "provider_models"
     __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='provider_model_pkey'),
-        db.Index('provider_model_tenant_id_provider_idx', 'tenant_id', 'provider_name'),
-        db.UniqueConstraint('tenant_id', 'provider_name', 'model_name', 'model_type', name='unique_provider_model_name')
+        sa.PrimaryKeyConstraint("id", name="provider_model_pkey"),
+        sa.Index("provider_model_tenant_id_provider_idx", "tenant_id", "provider_name"),
+        sa.UniqueConstraint(
+            "tenant_id", "provider_name", "model_name", "model_type", name="unique_provider_model_name"
+        ),
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    tenant_id = db.Column(UUID, nullable=False)
-    provider_name = db.Column(db.String(40), nullable=False)
-    model_name = db.Column(db.String(255), nullable=False)
-    model_type = db.Column(db.String(40), nullable=False)
-    encrypted_config = db.Column(db.Text, nullable=True)
-    is_valid = db.Column(db.Boolean, nullable=False, server_default=db.text('false'))
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-
-
-class TenantDefaultModel(db.Model):
-    __tablename__ = 'tenant_default_models'
-    __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='tenant_default_model_pkey'),
-        db.Index('tenant_default_model_tenant_id_provider_type_idx', 'tenant_id', 'provider_name', 'model_type'),
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_type: Mapped[ModelType] = mapped_column(EnumText(ModelType, length=40), nullable=False)
+    credential_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True, default=None)
+    is_valid: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    tenant_id = db.Column(UUID, nullable=False)
-    provider_name = db.Column(db.String(40), nullable=False)
-    model_name = db.Column(db.String(40), nullable=False)
-    model_type = db.Column(db.String(40), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
 
-
-class TenantPreferredModelProvider(db.Model):
-    __tablename__ = 'tenant_preferred_model_providers'
+class TenantDefaultModel(TypeBase):
+    __tablename__ = "tenant_default_models"
     __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='tenant_preferred_model_provider_pkey'),
-        db.Index('tenant_preferred_model_provider_tenant_provider_idx', 'tenant_id', 'provider_name'),
+        sa.PrimaryKeyConstraint("id", name="tenant_default_model_pkey"),
+        sa.Index("tenant_default_model_tenant_id_provider_type_idx", "tenant_id", "provider_name", "model_type"),
+        sa.UniqueConstraint("tenant_id", "model_type", name="unique_tenant_default_model_type"),
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    tenant_id = db.Column(UUID, nullable=False)
-    provider_name = db.Column(db.String(40), nullable=False)
-    preferred_provider_type = db.Column(db.String(40), nullable=False)
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-
-
-class ProviderOrder(db.Model):
-    __tablename__ = 'provider_orders'
-    __table_args__ = (
-        db.PrimaryKeyConstraint('id', name='provider_order_pkey'),
-        db.Index('provider_order_tenant_provider_idx', 'tenant_id', 'provider_name'),
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_type: Mapped[ModelType] = mapped_column(EnumText(ModelType, length=40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
     )
 
-    id = db.Column(UUID, server_default=db.text('uuid_generate_v4()'))
-    tenant_id = db.Column(UUID, nullable=False)
-    provider_name = db.Column(db.String(40), nullable=False)
-    account_id = db.Column(UUID, nullable=False)
-    payment_product_id = db.Column(db.String(191), nullable=False)
-    payment_id = db.Column(db.String(191))
-    transaction_id = db.Column(db.String(191))
-    quantity = db.Column(db.Integer, nullable=False, server_default=db.text('1'))
-    currency = db.Column(db.String(40))
-    total_amount = db.Column(db.Integer)
-    payment_status = db.Column(db.String(40), nullable=False, server_default=db.text("'wait_pay'::character varying"))
-    paid_at = db.Column(db.DateTime)
-    pay_failed_at = db.Column(db.DateTime)
-    refunded_at = db.Column(db.DateTime)
-    created_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
-    updated_at = db.Column(db.DateTime, nullable=False, server_default=db.text('CURRENT_TIMESTAMP(0)'))
+
+class TenantPreferredModelProvider(TypeBase):
+    __tablename__ = "tenant_preferred_model_providers"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="tenant_preferred_model_provider_pkey"),
+        sa.Index("tenant_preferred_model_provider_tenant_provider_idx", "tenant_id", "provider_name"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    preferred_provider_type: Mapped[ProviderType] = mapped_column(EnumText(ProviderType, length=40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )
+
+
+class ProviderOrder(TypeBase):
+    __tablename__ = "provider_orders"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="provider_order_pkey"),
+        sa.Index("provider_order_tenant_provider_idx", "tenant_id", "provider_name"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    account_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    payment_product_id: Mapped[str] = mapped_column(String(191), nullable=False)
+    payment_id: Mapped[str | None] = mapped_column(String(191))
+    transaction_id: Mapped[str | None] = mapped_column(String(191))
+    quantity: Mapped[int] = mapped_column(sa.Integer, nullable=False, server_default=text("1"))
+    currency: Mapped[str | None] = mapped_column(String(40))
+    total_amount: Mapped[int | None] = mapped_column(sa.Integer)
+    payment_status: Mapped[PaymentStatus] = mapped_column(
+        EnumText(PaymentStatus, length=40), nullable=False, server_default=text("'wait_pay'")
+    )
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime)
+    pay_failed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    refunded_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )
+
+
+class ProviderModelSetting(TypeBase):
+    """
+    Provider model settings for record the model enabled status and load balancing status.
+    """
+
+    __tablename__ = "provider_model_settings"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="provider_model_setting_pkey"),
+        sa.Index("provider_model_setting_tenant_provider_model_idx", "tenant_id", "provider_name", "model_type"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_type: Mapped[ModelType] = mapped_column(EnumText(ModelType, length=40), nullable=False)
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    load_balancing_enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )
+
+
+class LoadBalancingModelConfig(TypeBase):
+    """
+    Configurations for load balancing models.
+    """
+
+    __tablename__ = "load_balancing_model_configs"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="load_balancing_model_config_pkey"),
+        sa.Index("load_balancing_model_config_tenant_provider_model_idx", "tenant_id", "provider_name", "model_type"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuid4()), default_factory=lambda: str(uuid4()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_type: Mapped[ModelType] = mapped_column(EnumText(ModelType, length=40), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_config: Mapped[str | None] = mapped_column(LongText, nullable=True, default=None)
+    credential_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True, default=None)
+    credential_source_type: Mapped[CredentialSourceType | None] = mapped_column(
+        EnumText(CredentialSourceType, length=40), nullable=True, default=None
+    )
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )
+
+
+class ProviderCredential(TypeBase):
+    """
+    Provider credential - stores multiple named credentials for each provider
+    """
+
+    __tablename__ = "provider_credentials"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="provider_credential_pkey"),
+        sa.Index("provider_credential_tenant_provider_idx", "tenant_id", "provider_name"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuidv7()), default_factory=lambda: str(uuidv7()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    credential_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_config: Mapped[str] = mapped_column(LongText, nullable=False)
+    user_id: Mapped[str | None] = mapped_column(StringUUID, nullable=True, default=None)
+    visibility: Mapped[PermissionEnum] = mapped_column(
+        EnumText(PermissionEnum, length=40), nullable=False, default=PermissionEnum.ALL_TEAM
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )
+
+
+class ProviderModelCredential(TypeBase):
+    """
+    Provider model credential - stores multiple named credentials for each provider model
+    """
+
+    __tablename__ = "provider_model_credentials"
+    __table_args__ = (
+        sa.PrimaryKeyConstraint("id", name="provider_model_credential_pkey"),
+        sa.Index(
+            "provider_model_credential_tenant_provider_model_idx",
+            "tenant_id",
+            "provider_name",
+            "model_name",
+            "model_type",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(
+        StringUUID, insert_default=lambda: str(uuidv7()), default_factory=lambda: str(uuidv7()), init=False
+    )
+    tenant_id: Mapped[str] = mapped_column(StringUUID, nullable=False)
+    provider_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    model_type: Mapped[ModelType] = mapped_column(EnumText(ModelType, length=40), nullable=False)
+    credential_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    encrypted_config: Mapped[str] = mapped_column(LongText, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp(), init=False
+    )

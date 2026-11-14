@@ -1,183 +1,182 @@
-import {
-  memo,
-  useState,
-} from 'react'
-import cn from 'classnames'
-import useSWR from 'swr'
+import { cn } from '@langgenius/dify-ui/cn'
+import { Popover, PopoverContent, PopoverTrigger } from '@langgenius/dify-ui/popover'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@langgenius/dify-ui/tooltip'
+import { useAtomValue } from 'jotai'
+import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useShallow } from 'zustand/react/shallow'
-import {
-  useIsChatMode,
-  useWorkflow,
-  useWorkflowRun,
-} from '../hooks'
-import { WorkflowRunningStatus } from '../types'
-import {
-  PortalToFollowElem,
-  PortalToFollowElemContent,
-  PortalToFollowElemTrigger,
-} from '@/app/components/base/portal-to-follow-elem'
-import TooltipPlus from '@/app/components/base/tooltip-plus'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import {
-  ClockPlay,
-  ClockPlaySlim,
-} from '@/app/components/base/icons/src/vender/line/time'
-import { CheckCircle, XClose } from '@/app/components/base/icons/src/vender/line/general'
-import { AlertCircle, AlertTriangle } from '@/app/components/base/icons/src/vender/line/alertsAndFeedback'
-import {
-  fetcChatRunHistory,
-  fetchWorkflowRunHistory,
-} from '@/service/workflow'
-import Loading from '@/app/components/base/loading'
-import {
-  useStore,
-  useWorkflowStore,
-} from '@/app/components/workflow/store'
+import { LoadingPlaceholder } from '@/app/components/base/loading-placeholder'
+import { useInputFieldPanel } from '@/app/components/rag-pipeline/hooks/use-input-field-panel'
+import { isChatflowAtom } from '@/app/components/workflow/editor-resource/state'
+import { useStore, useWorkflowStore } from '@/app/components/workflow/store'
+import { useFormatTimeFromNow } from '@/hooks/use-format-time-from-now'
+import { useWorkflowRunHistory } from '@/service/use-workflow'
+import { useNodesInteractions } from '../hooks/use-nodes-interactions'
+import { useWorkflowInteractions } from '../hooks/use-workflow-panel-interactions'
+import { useWorkflowRun } from '../hooks/use-workflow-run'
+import { ControlMode, WorkflowRunningStatus } from '../types'
+import { formatWorkflowRunIdentifier } from '../utils'
 
-const ViewHistory = () => {
-  const { t } = useTranslation()
-  const isChatMode = useIsChatMode()
+export type ViewHistoryProps = {
+  withText?: boolean
+  onClearLogAndMessageModal?: () => void
+  historyUrl?: string
+}
+const ViewHistory = ({ withText, onClearLogAndMessageModal, historyUrl }: ViewHistoryProps) => {
+  const { t } = useTranslation(['common', 'workflow'])
+  const isChatflow = useAtomValue(isChatflowAtom)
   const [open, setOpen] = useState(false)
-  const { formatTimeFromNow } = useWorkflow()
+  const { formatTimeFromNow } = useFormatTimeFromNow()
+  const { handleNodesCancelSelected } = useNodesInteractions()
+  const { handleCancelDebugAndPreviewPanel } = useWorkflowInteractions()
   const workflowStore = useWorkflowStore()
-  const { appDetail, setCurrentLogItem, setShowMessageLogModal } = useAppStore(useShallow(state => ({
-    appDetail: state.appDetail,
-    setCurrentLogItem: state.setCurrentLogItem,
-    setShowMessageLogModal: state.setShowMessageLogModal,
-  })))
-  const historyWorkflowData = useStore(s => s.historyWorkflowData)
+  const setControlMode = useStore((s) => s.setControlMode)
+  const historyWorkflowData = useStore((s) => s.historyWorkflowData)
   const { handleBackupDraft } = useWorkflowRun()
-  const { data: runList, isLoading: runListLoading } = useSWR((appDetail && !isChatMode && open) ? `/apps/${appDetail.id}/workflow-runs` : null, fetchWorkflowRunHistory)
-  const { data: chatList, isLoading: chatListLoading } = useSWR((appDetail && isChatMode && open) ? `/apps/${appDetail.id}/advanced-chat/workflow-runs` : null, fetcChatRunHistory)
+  const { closeAllInputFieldPanels } = useInputFieldPanel()
 
-  const data = isChatMode ? chatList : runList
-  const isLoading = isChatMode ? chatListLoading : runListLoading
+  const shouldFetchHistory = open && !!historyUrl
+  const { data, isLoading } = useWorkflowRunHistory(historyUrl, shouldFetchHistory)
 
   return (
-    (
-      <PortalToFollowElem
-        placement='bottom-end'
-        offset={{
-          mainAxis: 4,
-          crossAxis: 131,
-        }}
-        open={open}
-        onOpenChange={setOpen}
+    <Popover open={open} onOpenChange={setOpen}>
+      {withText ? (
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              className={cn(
+                'flex h-8 items-center rounded-lg border-[0.5px] border-components-button-secondary-border bg-components-button-secondary-bg px-3 shadow-xs',
+                'cursor-pointer text-[13px] font-medium text-components-button-secondary-text hover:bg-components-button-secondary-bg-hover',
+                'data-popup-open:bg-components-button-secondary-bg-hover',
+              )}
+            >
+              <span className="mr-1 i-custom-vender-line-time-clock-play size-4" />
+              {t(($) => $['common.showRunHistory'], { ns: 'workflow' })}
+            </button>
+          }
+        />
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={<div className="flex" />}>
+            <PopoverTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={t(($) => $['common.viewRunHistory'], { ns: 'workflow' })}
+                  className="group flex size-7 cursor-pointer items-center justify-center rounded-md hover:bg-state-accent-hover data-popup-open:bg-state-accent-hover"
+                  onClick={() => {
+                    onClearLogAndMessageModal?.()
+                  }}
+                >
+                  <span className="i-custom-vender-line-time-clock-play size-4 text-components-button-ghost-text group-hover:text-components-button-secondary-accent-text group-data-popup-open:text-components-button-secondary-accent-text" />
+                </button>
+              }
+            />
+          </TooltipTrigger>
+          <TooltipContent>
+            {t(($) => $['common.viewRunHistory'], { ns: 'workflow' })}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      <PopoverContent
+        align={withText ? 'start' : 'end'}
+        sideOffset={4}
+        alignOffset={withText ? -8 : 10}
+        className="border-none bg-transparent shadow-none"
       >
-        <PortalToFollowElemTrigger onClick={() => setOpen(v => !v)}>
-          <TooltipPlus
-            popupContent={t('workflow.common.viewRunHistory')}
-          >
-            <div
-              className={`
-                flex items-center justify-center w-7 h-7 rounded-md hover:bg-black/5 cursor-pointer
-                ${open && 'bg-primary-50'}
-              `}
+        <div
+          className="ml-2 flex w-60 flex-col overflow-y-auto rounded-xl border-[0.5px] border-components-panel-border bg-components-panel-bg shadow-xl"
+          style={{
+            maxHeight: 'calc(2 / 3 * 100vh)',
+          }}
+        >
+          <div className="sticky top-0 flex items-center justify-between bg-components-panel-bg px-4 pt-3 text-base font-semibold text-text-primary">
+            <div className="grow">{t(($) => $['common.runHistory'], { ns: 'workflow' })}</div>
+            <button
+              type="button"
+              aria-label={t(($) => $['operation.close'], { ns: 'common' })}
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center"
               onClick={() => {
-                setCurrentLogItem()
-                setShowMessageLogModal(false)
+                onClearLogAndMessageModal?.()
+                setOpen(false)
               }}
             >
-              <ClockPlay className={`w-4 h-4 ${open ? 'text-primary-600' : 'text-gray-500'}`} />
-            </div>
-          </TooltipPlus>
-        </PortalToFollowElemTrigger>
-        <PortalToFollowElemContent className='z-[12]'>
-          <div
-            className='flex flex-col ml-2 w-[240px] bg-white border-[0.5px] border-gray-200 shadow-xl rounded-xl overflow-y-auto'
-            style={{
-              maxHeight: 'calc(2 / 3 * 100vh)',
-            }}
-          >
-            <div className='sticky top-0 bg-white flex items-center justify-between px-4 pt-3 text-base font-semibold text-gray-900'>
-              <div className='grow'>{t('workflow.common.runHistory')}</div>
-              <div
-                className='shrink-0 flex items-center justify-center w-6 h-6 cursor-pointer'
-                onClick={() => {
-                  setCurrentLogItem()
-                  setShowMessageLogModal(false)
-                  setOpen(false)
-                }}
-              >
-                <XClose className='w-4 h-4 text-gray-500' />
-              </div>
-            </div>
-            {
-              isLoading && (
-                <div className='flex items-center justify-center h-10'>
-                  <Loading />
-                </div>
-              )
-            }
-            {
-              !isLoading && (
-                <div className='p-2'>
-                  {
-                    !data?.data.length && (
-                      <div className='py-12'>
-                        <ClockPlaySlim className='mx-auto mb-2 w-8 h-8 text-gray-300' />
-                        <div className='text-center text-[13px] text-gray-400'>
-                          {t('workflow.common.notRunning')}
-                        </div>
-                      </div>
-                    )
-                  }
-                  {
-                    data?.data.map(item => (
-                      <div
-                        key={item.id}
-                        className={cn(
-                          'flex mb-0.5 px-2 py-[7px] rounded-lg hover:bg-primary-50 cursor-pointer',
-                          item.id === historyWorkflowData?.id && 'bg-primary-50',
-                        )}
-                        onClick={() => {
-                          workflowStore.setState({
-                            historyWorkflowData: item,
-                            showInputsPanel: false,
-                          })
-                          handleBackupDraft()
-                          setOpen(false)
-                        }}
-                      >
-                        {
-                          !isChatMode && item.status === WorkflowRunningStatus.Stopped && (
-                            <AlertTriangle className='mt-0.5 mr-1.5 w-3.5 h-3.5 text-[#F79009]' />
-                          )
-                        }
-                        {
-                          !isChatMode && item.status === WorkflowRunningStatus.Failed && (
-                            <AlertCircle className='mt-0.5 mr-1.5 w-3.5 h-3.5 text-[#F04438]' />
-                          )
-                        }
-                        {
-                          !isChatMode && item.status === WorkflowRunningStatus.Succeeded && (
-                            <CheckCircle className='mt-0.5 mr-1.5 w-3.5 h-3.5 text-[#12B76A]' />
-                          )
-                        }
-                        <div>
-                          <div
-                            className={cn(
-                              'flex items-center text-[13px] font-medium leading-[18px]',
-                              item.id === historyWorkflowData?.id && 'text-primary-600',
-                            )}
-                          >
-                            {`Test ${isChatMode ? 'Chat' : 'Run'}#${item.sequence_number}`}
-                          </div>
-                          <div className='flex items-center text-xs text-gray-500 leading-[18px]'>
-                            {item.created_by_account.name} · {formatTimeFromNow((item.finished_at || item.created_at) * 1000)}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  }
-                </div>
-              )
-            }
+              <span className="i-ri-close-line size-4 text-text-tertiary" />
+            </button>
           </div>
-        </PortalToFollowElemContent>
-      </PortalToFollowElem>
-    )
+          {isLoading && (
+            <div className="flex h-10 items-center justify-center">
+              <LoadingPlaceholder />
+            </div>
+          )}
+          {!isLoading && (
+            <div className="p-2">
+              {!data?.data.length && (
+                <div className="py-12">
+                  <span className="mx-auto mb-2 i-custom-vender-line-time-clock-play-slim size-8 text-text-quaternary" />
+                  <div className="text-center text-[13px] text-text-quaternary">
+                    {t(($) => $['common.notRunning'], { ns: 'workflow' })}
+                  </div>
+                </div>
+              )}
+              {data?.data.map((item) => {
+                const interruptedStatuses: readonly WorkflowRunningStatus[] = [
+                  WorkflowRunningStatus.Stopped,
+                  WorkflowRunningStatus.Paused,
+                ]
+                return (
+                  <div
+                    key={item.id}
+                    className={cn(
+                      'mb-0.5 flex cursor-pointer rounded-lg px-2 py-1.75 hover:bg-state-base-hover',
+                      item.id === historyWorkflowData?.id &&
+                        'bg-state-accent-hover hover:bg-state-accent-hover',
+                    )}
+                    onClick={() => {
+                      workflowStore.setState({
+                        historyWorkflowData: item,
+                        showInputsPanel: false,
+                        showEnvPanel: false,
+                      })
+                      closeAllInputFieldPanels()
+                      handleBackupDraft()
+                      setOpen(false)
+                      handleNodesCancelSelected()
+                      handleCancelDebugAndPreviewPanel()
+                      setControlMode(ControlMode.Hand)
+                    }}
+                  >
+                    {!isChatflow && interruptedStatuses.includes(item.status) && (
+                      <span className="mt-0.5 mr-1.5 i-custom-vender-line-alertsAndFeedback-alert-triangle h-3.5 w-3.5 text-[#F79009]" />
+                    )}
+                    {!isChatflow && item.status === WorkflowRunningStatus.Failed && (
+                      <span className="mt-0.5 mr-1.5 i-ri-error-warning-line h-3.5 w-3.5 text-[#F04438]" />
+                    )}
+                    {!isChatflow && item.status === WorkflowRunningStatus.Succeeded && (
+                      <span className="mt-0.5 mr-1.5 i-ri-checkbox-circle-line h-3.5 w-3.5 text-[#12B76A]" />
+                    )}
+                    <div>
+                      <div
+                        className={cn(
+                          'flex items-center text-[13px] leading-4.5 font-medium text-text-primary',
+                          item.id === historyWorkflowData?.id && 'text-text-accent',
+                        )}
+                      >
+                        {`Test ${isChatflow ? 'Chat' : 'Run'}${formatWorkflowRunIdentifier(item.finished_at, item.status)}`}
+                      </div>
+                      <div className="flex items-center text-xs leading-4.5 text-text-tertiary">
+                        {item.created_by_account?.name} ·
+                        {formatTimeFromNow((item.finished_at || item.created_at) * 1000)}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

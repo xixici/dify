@@ -1,101 +1,135 @@
-import { memo } from 'react'
-import {
-  getConnectedEdges,
-  getOutgoers,
-  useEdges,
-  useStoreApi,
-} from 'reactflow'
-import { useToolIcon } from '../../../../hooks'
+import type { Node } from '../../../../types'
+import { isEqual } from 'es-toolkit/predicate'
+import { memo, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
+import { getConnectedEdges, getOutgoers, useStore } from 'reactflow'
+import { ErrorHandleTypeEnum } from '@/app/components/workflow/nodes/_base/components/error-handle/types'
+import { hasAgentV2OutputRoutes } from '@/app/components/workflow/nodes/agent-v2/types'
+import { hasErrorHandleNode } from '@/app/components/workflow/utils'
 import BlockIcon from '../../../../block-icon'
-import type {
-  Branch,
-  Node,
-} from '../../../../types'
+import { useToolIcon } from '../../../../hooks/use-tool-icon'
 import { BlockEnum } from '../../../../types'
-import Add from './add'
-import Item from './item'
+import Container from './container'
 import Line from './line'
 
 type NextStepProps = {
   selectedNode: Node
 }
-const NextStep = ({
-  selectedNode,
-}: NextStepProps) => {
+const NextStep = ({ selectedNode }: NextStepProps) => {
+  const { t } = useTranslation(['workflow'])
   const data = selectedNode.data
   const toolIcon = useToolIcon(data)
-  const store = useStoreApi()
-  const branches = data._targetBranches || []
-  const nodeWithBranches = data.type === BlockEnum.IfElse || data.type === BlockEnum.QuestionClassifier
-  const edges = useEdges()
-  const outgoers = getOutgoers(selectedNode as Node, store.getState().getNodes(), edges)
-  const connectedEdges = getConnectedEdges([selectedNode] as Node[], edges).filter(edge => edge.source === selectedNode!.id)
+  const branches = useMemo(() => {
+    return data._targetBranches || []
+  }, [data])
+  const edges = useStore(
+    (s) =>
+      s.edges.map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        sourceHandle: edge.sourceHandle,
+        target: edge.target,
+        targetHandle: edge.targetHandle,
+      })),
+    isEqual,
+  )
+  const nodes = useStore(
+    (s) =>
+      s.getNodes().map((node) => ({
+        id: node.id,
+        data: node.data,
+      })),
+    isEqual,
+  )
+  const outgoers = getOutgoers(selectedNode, nodes as Node[], edges)
+  const connectedEdges = getConnectedEdges([selectedNode] as Node[], edges).filter(
+    (edge) => edge.source === selectedNode!.id,
+  )
+
+  const list = useMemo(() => {
+    const resolveNextNodes = (connected: typeof connectedEdges) => {
+      return connected.reduce<Node[]>((acc, edge) => {
+        const nextNode = outgoers.find((outgoer) => outgoer.id === edge.target)
+        if (nextNode) acc.push(nextNode)
+        return acc
+      }, [])
+    }
+    let items = []
+    if (branches?.length) {
+      items = branches.map((branch, index) => {
+        const connected = connectedEdges.filter((edge) => edge.sourceHandle === branch.id)
+        const nextNodes = resolveNextNodes(connected)
+
+        return {
+          branch: {
+            ...branch,
+            name:
+              data.type === BlockEnum.QuestionClassifier
+                ? `${t(($) => $['nodes.questionClassifiers.class'], { ns: 'workflow' })} ${index + 1}`
+                : hasAgentV2OutputRoutes(data)
+                  ? data.agent_output_routes?.routes?.[index]?.label ||
+                    t(($) => $['nodes.agent.outputRoutes.route'], {
+                      ns: 'workflow',
+                      index: index + 1,
+                    })
+                  : branch.name,
+          },
+          nextNodes,
+        }
+      })
+    } else {
+      const connected = connectedEdges.filter((edge) => edge.sourceHandle === 'source')
+      const nextNodes = resolveNextNodes(connected)
+
+      items = [
+        {
+          branch: {
+            id: '',
+            name: '',
+          },
+          nextNodes,
+        },
+      ]
+    }
+
+    if (data.error_strategy === ErrorHandleTypeEnum.failBranch && hasErrorHandleNode(data.type)) {
+      const connected = connectedEdges.filter(
+        (edge) => edge.sourceHandle === ErrorHandleTypeEnum.failBranch,
+      )
+      const nextNodes = resolveNextNodes(connected)
+
+      items.push({
+        branch: {
+          id: ErrorHandleTypeEnum.failBranch,
+          name: t(($) => $['common.onFailure'], { ns: 'workflow' }),
+        },
+        nextNodes,
+      })
+    }
+
+    return items
+  }, [branches, connectedEdges, data, outgoers, t])
 
   return (
-    <div className='flex py-1'>
-      <div className='shrink-0 relative flex items-center justify-center w-9 h-9 bg-white rounded-lg border-[0.5px] border-gray-200 shadow-xs'>
-        <BlockIcon
-          type={selectedNode!.data.type}
-          toolIcon={toolIcon}
-        />
+    <div className="flex py-1">
+      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-[0.5px] border-divider-regular bg-background-default shadow-xs">
+        <BlockIcon type={selectedNode!.data.type} toolIcon={toolIcon} />
       </div>
-      <Line linesNumber={nodeWithBranches ? branches.length : 1} />
-      <div className='grow'>
-        {
-          !nodeWithBranches && !!outgoers.length && (
-            <Item
-              nodeId={outgoers[0].id}
-              data={outgoers[0].data}
-              sourceHandle='source'
-            />
-          )
-        }
-        {
-          !nodeWithBranches && !outgoers.length && (
-            <Add
+      <Line list={list.length ? list.map((item) => item.nextNodes.length + 1) : [1]} />
+      <div className="grow space-y-2">
+        {list.map((item, index) => {
+          return (
+            <Container
+              key={index}
               nodeId={selectedNode!.id}
-              nodeType={selectedNode!.data.type}
-              sourceHandle='source'
+              nodeData={selectedNode!.data}
+              sourceHandle={item.branch.id}
+              nextNodes={item.nextNodes}
+              branchName={item.branch.name}
+              isFailBranch={item.branch.id === ErrorHandleTypeEnum.failBranch}
             />
           )
-        }
-        {
-          !!branches?.length && nodeWithBranches && (
-            branches.map((branch: Branch) => {
-              const connected = connectedEdges.find(edge => edge.sourceHandle === branch.id)
-              const target = outgoers.find(outgoer => outgoer.id === connected?.target)
-
-              return (
-                <div
-                  key={branch.id}
-                  className='mb-3 last-of-type:mb-0'
-                >
-                  {
-                    connected && (
-                      <Item
-                        data={target!.data!}
-                        nodeId={target!.id}
-                        sourceHandle={branch.id}
-                        branchName={branch.name}
-                      />
-                    )
-                  }
-                  {
-                    !connected && (
-                      <Add
-                        key={branch.id}
-                        nodeId={selectedNode!.id}
-                        nodeType={selectedNode!.data.type}
-                        sourceHandle={branch.id}
-                        branchName={branch.name}
-                      />
-                    )
-                  }
-                </div>
-              )
-            })
-          )
-        }
+        })}
       </div>
     </div>
   )

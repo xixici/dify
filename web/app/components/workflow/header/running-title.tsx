@@ -1,22 +1,30 @@
+import { useAtomValue } from 'jotai'
 import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useStore as useAppStore } from '@/app/components/app/store'
-import { Play } from '@/app/components/base/icons/src/vender/solid/mediaAndDevices'
+import { isChatflowAtom } from '@/app/components/workflow/editor-resource/state'
+import { useStore } from '../store'
+import { formatWorkflowRunIdentifier } from '../utils'
 
 const RunningTitle = () => {
-  const { t } = useTranslation()
-  const appDetail = useAppStore(state => state.appDetail)
+  const { t } = useTranslation(['workflow'] as const)
+  const isChatflow = useAtomValue(isChatflowAtom)
+  const historyWorkflowData = useStore((s) => s.historyWorkflowData)
 
   return (
-    <div className='flex items-center h-[18px] text-xs text-primary-600'>
-      <Play className='mr-1 w-3 h-3' />
-      {
-        appDetail?.mode === 'advanced-chat'
-          ? t('workflow.common.inPreviewMode')
-          : t('workflow.common.inRunMode')
-      }
-      <span className='mx-1'>·</span>
-      <span className='text-gray-500'>Test Run#2</span>
+    <div className="flex h-4.5 items-center text-xs text-gray-500">
+      <span
+        aria-hidden
+        className="me-1 i-custom-vender-line-time-clock-play size-3 text-gray-500"
+      />
+      <span>
+        {isChatflow
+          ? `Test Chat${formatWorkflowRunIdentifier(historyWorkflowData?.finished_at, historyWorkflowData?.status)}`
+          : `Test Run${formatWorkflowRunIdentifier(historyWorkflowData?.finished_at, historyWorkflowData?.status)}`}
+      </span>
+      <span className="mx-1">·</span>
+      <span className="ms-1 flex h-4.5 items-center rounded-[5px] border border-indigo-300 bg-white/48 px-1 text-2xs font-semibold text-indigo-600 uppercase">
+        {t(($) => $['common.viewOnly'], { ns: 'workflow' })}
+      </span>
     </div>
   )
 }

@@ -1,95 +1,67 @@
+from http import HTTPStatus
+from typing import Any
 
-from flask import current_app
-from flask_restful import fields, marshal_with
+from flask_restx import Resource
+from pydantic import BaseModel, Field
 
-from controllers.console import api
+from controllers.common.fields import Parameters
+from controllers.common.schema import register_response_schema_models
+from controllers.console import console_ns
 from controllers.console.app.error import AppUnavailableError
-from controllers.console.explore.wraps import InstalledAppResource
-from models.model import AppMode, InstalledApp
-from services.app_service import AppService
+from controllers.console.explore.installed_app_admission import get_installed_app
+from controllers.console.flask_admission import console_account_admission
+from extensions.ext_application_services import application_services
+from libs.external_api import error_responses
+from libs.helper import dump_response
+from machinery.context import RequestContext
+from services.app_definition_query_service import AppDefinitionUnavailableError
+from services.installed_app_access_service import InstalledAppRef
 
 
-class AppParameterApi(InstalledAppResource):
+class ExploreAppMetaResponse(BaseModel):
+    """Metadata consumed by the installed-app chat UI.
+
+    Built-in tool icons are URL strings; API-based tool icons are provider-defined payload objects.
+    """
+
+    tool_icons: dict[str, str | dict[str, Any]] = Field(default_factory=dict)
+
+
+register_response_schema_models(console_ns, Parameters, ExploreAppMetaResponse)
+
+
+@console_ns.route("/installed-apps/<uuid:installed_app_id>/parameters", endpoint="installed_app_parameters")
+class AppParameterApi(Resource):
     """Resource for app variables."""
-    variable_fields = {
-        'key': fields.String,
-        'name': fields.String,
-        'description': fields.String,
-        'type': fields.String,
-        'default': fields.String,
-        'max_length': fields.Integer,
-        'options': fields.List(fields.String)
-    }
 
-    system_parameters_fields = {
-        'image_file_size_limit': fields.String
-    }
-
-    parameters_fields = {
-        'opening_statement': fields.String,
-        'suggested_questions': fields.Raw,
-        'suggested_questions_after_answer': fields.Raw,
-        'speech_to_text': fields.Raw,
-        'text_to_speech': fields.Raw,
-        'retriever_resource': fields.Raw,
-        'annotation_reply': fields.Raw,
-        'more_like_this': fields.Raw,
-        'user_input_form': fields.Raw,
-        'sensitive_word_avoidance': fields.Raw,
-        'file_upload': fields.Raw,
-        'system_parameters': fields.Nested(system_parameters_fields)
-    }
-
-    @marshal_with(parameters_fields)
-    def get(self, installed_app: InstalledApp):
+    @error_responses(AppUnavailableError)
+    @console_ns.response(HTTPStatus.OK, "Success", console_ns.models[Parameters.__name__])
+    @console_account_admission()
+    @get_installed_app
+    def get(self, request_context: RequestContext, installed_app: InstalledAppRef) -> dict[str, object]:
         """Retrieve app parameters."""
-        app_model = installed_app.app
+        try:
+            parameters = application_services().app_definitions.get_parameters(installed_app.app_id)
+        except AppDefinitionUnavailableError:
+            raise AppUnavailableError() from None
 
-        if app_model.mode in [AppMode.ADVANCED_CHAT.value, AppMode.WORKFLOW.value]:
-            workflow = app_model.workflow
-            if workflow is None:
-                raise AppUnavailableError()
-
-            features_dict = workflow.features_dict
-            user_input_form = workflow.user_input_form(to_old_structure=True)
-        else:
-            app_model_config = app_model.app_model_config
-            features_dict = app_model_config.to_dict()
-
-            user_input_form = features_dict.get('user_input_form', [])
-
-        return {
-            'opening_statement': features_dict.get('opening_statement'),
-            'suggested_questions': features_dict.get('suggested_questions', []),
-            'suggested_questions_after_answer': features_dict.get('suggested_questions_after_answer',
-                                                                  {"enabled": False}),
-            'speech_to_text': features_dict.get('speech_to_text', {"enabled": False}),
-            'text_to_speech': features_dict.get('text_to_speech', {"enabled": False}),
-            'retriever_resource': features_dict.get('retriever_resource', {"enabled": False}),
-            'annotation_reply': features_dict.get('annotation_reply', {"enabled": False}),
-            'more_like_this': features_dict.get('more_like_this', {"enabled": False}),
-            'user_input_form': user_input_form,
-            'sensitive_word_avoidance': features_dict.get('sensitive_word_avoidance',
-                                                          {"enabled": False, "type": "", "configs": []}),
-            'file_upload': features_dict.get('file_upload', {"image": {
-                                                     "enabled": False,
-                                                     "number_limits": 3,
-                                                     "detail": "high",
-                                                     "transfer_methods": ["remote_url", "local_file"]
-                                                 }}),
-            'system_parameters': {
-                'image_file_size_limit': current_app.config.get('UPLOAD_IMAGE_FILE_SIZE_LIMIT')
-            }
-        }
+        return dump_response(Parameters, parameters)
 
 
-class ExploreAppMetaApi(InstalledAppResource):
-    def get(self, installed_app: InstalledApp):
+@console_ns.route("/installed-apps/<uuid:installed_app_id>/meta", endpoint="installed_app_meta")
+class ExploreAppMetaApi(Resource):
+    @error_responses(AppUnavailableError)
+    @console_ns.response(HTTPStatus.OK, "Success", console_ns.models[ExploreAppMetaResponse.__name__])
+    @console_account_admission()
+    @get_installed_app
+    def get(self, request_context: RequestContext, installed_app: InstalledAppRef) -> dict[str, object]:
         """Get app meta"""
-        app_model = installed_app.app
-        return AppService().get_app_meta(app_model)
+        try:
+            tool_icons = application_services().app_definitions.get_tool_icons(installed_app.app_id)
+        except AppDefinitionUnavailableError:
+            raise AppUnavailableError() from None
 
-
-api.add_resource(AppParameterApi, '/installed-apps/<uuid:installed_app_id>/parameters',
-                 endpoint='installed_app_parameters')
-api.add_resource(ExploreAppMetaApi, '/installed-apps/<uuid:installed_app_id>/meta', endpoint='installed_app_meta')
+        return dump_response(
+            ExploreAppMetaResponse,
+            {"tool_icons": tool_icons},
+        )

@@ -1,53 +1,43 @@
-import {
-  memo,
-  useState,
-} from 'react'
+import { RiArrowDownSLine } from '@remixicon/react'
+import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown } from '@/app/components/base/icons/src/vender/line/arrows'
 
-const UserInput = () => {
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(true)
-  const variables: any = []
+type UserInputVariable = {
+  variable: string
+}
 
-  if (!variables.length)
-    return null
+type UserInputProps = {
+  variables?: UserInputVariable[]
+  initialExpanded?: boolean
+}
+
+const UserInput = ({ variables = [], initialExpanded = true }: UserInputProps) => {
+  const { t } = useTranslation(['workflow'])
+  const [expanded, setExpanded] = useState(initialExpanded)
+
+  if (!variables.length) return null
 
   return (
     <div
-      className={`
-        rounded-xl border
-        ${!expanded ? 'bg-indigo-25 border-indigo-100 shadow-none' : 'bg-white shadow-xs border-transparent'}
-      `}
+      className={`rounded-xl border ${!expanded ? 'border-components-panel-border-subtle bg-components-panel-on-panel-item-bg shadow-none' : 'border-transparent bg-white shadow-xs'} `}
     >
       <div
-        className={`
-          flex items-center px-2 pt-4 h-[18px] text-[13px] font-semibold cursor-pointer
-          ${!expanded ? 'text-indigo-800' : 'text-gray-800'}
-        `}
+        className={`flex h-4.5 cursor-pointer items-center px-2 pt-4 text-[13px] font-semibold ${!expanded ? 'text-text-accent-secondary' : 'text-text-secondary'} `}
         onClick={() => setExpanded(!expanded)}
       >
-        <ChevronDown
-          className={`mr-1 w-3 h-3 ${!expanded ? '-rotate-90 text-indigo-600' : 'text-gray-300'}`}
+        <RiArrowDownSLine
+          className={`mr-1 size-3 ${!expanded ? '-rotate-90 text-text-accent' : 'text-text-tertiary'}`}
         />
-        {t('workflow.panel.userInputField').toLocaleUpperCase()}
+        {t(($) => $['panel.userInputField'], { ns: 'workflow' }).toLocaleUpperCase()}
       </div>
-      <div className='px-2 pt-1 pb-3'>
-        {
-          expanded && (
-            <div className='py-2 text-[13px] text-gray-900'>
-              {
-                variables.map((variable: any) => (
-                  <div
-                    key={variable.variable}
-                    className='mb-2 last-of-type:mb-0'
-                  >
-                  </div>
-                ))
-              }
-            </div>
-          )
-        }
+      <div className="px-2 pt-1 pb-3">
+        {expanded && (
+          <div className="py-2 text-[13px] text-text-primary">
+            {variables.map((variable) => (
+              <div key={variable.variable} className="mb-2 last-of-type:mb-0"></div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

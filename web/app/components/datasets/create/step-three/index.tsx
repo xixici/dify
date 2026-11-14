@@ -1,62 +1,106 @@
 'use client'
-import React from 'react'
+import type { DatasetAndDocumentResponse } from '@dify/contracts/api/console/datasets/types.gen'
+import type { RETRIEVE_METHOD } from '@/types/app'
+import { Separator } from '@langgenius/dify-ui/separator'
+import { RiBookOpenLine } from '@remixicon/react'
+import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import cn from 'classnames'
+import AppIcon from '@/app/components/base/app-icon'
+import { useDocLink } from '@/context/i18n'
 import EmbeddingProcess from '../embedding-process'
-
-import s from './index.module.css'
-import useBreakpoints, { MediaType } from '@/hooks/use-breakpoints'
-import type { FullDocumentDetail, createDocumentResponse } from '@/models/datasets'
 
 type StepThreeProps = {
   datasetId?: string
   datasetName?: string
   indexingType?: string
-  creationCache?: createDocumentResponse
+  retrievalMethod?: RETRIEVE_METHOD
+  creationCache?: DatasetAndDocumentResponse
 }
 
-const StepThree = ({ datasetId, datasetName, indexingType, creationCache }: StepThreeProps) => {
-  const { t } = useTranslation()
+const StepThree = ({
+  datasetId,
+  datasetName,
+  indexingType,
+  creationCache,
+  retrievalMethod,
+}: StepThreeProps) => {
+  const { t } = useTranslation(['datasetCreation', 'datasetPipeline'])
+  const docLink = useDocLink()
 
-  const media = useBreakpoints()
-  const isMobile = media === MediaType.mobile
+  // The creation response carries no icon; new knowledge bases start with the default one.
+  const iconInfo = {
+    icon: '📙',
+    icon_type: 'emoji',
+    icon_background: '#FFF4ED',
+    icon_url: '',
+  }
 
   return (
-    <div className='flex w-full h-full'>
-      <div className={'h-full w-full overflow-y-scroll px-6 sm:px-16'}>
-        <div className='max-w-[636px]'>
+    <div className="flex size-full max-h-full min-w-0 flex-col overflow-y-auto xl:flex-row xl:justify-center">
+      <div className="max-w-240 min-w-0 shrink-0 grow px-4 sm:px-8 xl:shrink xl:px-16">
+        <div className="mx-auto max-w-160 pt-10 pb-8">
           {!datasetId && (
             <>
-              <div className={s.creationInfo}>
-                <div className={s.title}>{t('datasetCreation.stepThree.creationTitle')}</div>
-                <div className={s.content}>{t('datasetCreation.stepThree.creationContent')}</div>
-                <div className={s.label}>{t('datasetCreation.stepThree.label')}</div>
-                <div className={s.datasetName}>{datasetName || creationCache?.dataset?.name}</div>
+              <div className="flex flex-col gap-y-1 pb-3">
+                <h1 className="title-2xl-semi-bold text-text-primary">
+                  {t(($) => $['stepThree.creationTitle'], { ns: 'datasetCreation' })}
+                </h1>
+                <div className="system-sm-regular text-text-tertiary">
+                  {t(($) => $['stepThree.creationContent'], { ns: 'datasetCreation' })}
+                </div>
               </div>
-              <div className={s.dividerLine}/>
+              <div className="flex items-center gap-x-4">
+                <AppIcon size="xxl" className="shrink-0" icon={iconInfo} />
+                <div className="flex min-w-0 grow flex-col gap-y-1">
+                  <div className="flex h-6 items-center system-sm-semibold text-text-secondary">
+                    {t(($) => $['stepThree.label'], { ns: 'datasetCreation' })}
+                  </div>
+                  <div className="w-full rounded-lg bg-components-input-bg-normal p-2 system-sm-regular wrap-anywhere text-components-input-text-filled">
+                    <span className="px-1">{datasetName || creationCache?.dataset?.name}</span>
+                  </div>
+                </div>
+              </div>
+              <Separator orientation="horizontal" className="my-6 h-[0.5px] bg-divider-subtle" />
             </>
           )}
           {datasetId && (
-            <div className={s.creationInfo}>
-              <div className={s.title}>{t('datasetCreation.stepThree.additionTitle')}</div>
-              <div className={s.content}>{`${t('datasetCreation.stepThree.additionP1')} ${datasetName || creationCache?.dataset?.name} ${t('datasetCreation.stepThree.additionP2')}`}</div>
+            <div className="flex flex-col gap-y-1 pb-3">
+              <h1 className="title-2xl-semi-bold text-text-primary">
+                {t(($) => $['stepThree.additionTitle'], { ns: 'datasetCreation' })}
+              </h1>
+              <div className="system-sm-regular text-text-tertiary">{`${t(($) => $['stepThree.additionP1'], { ns: 'datasetCreation' })} ${datasetName || creationCache?.dataset?.name} ${t(($) => $['stepThree.additionP2'], { ns: 'datasetCreation' })}`}</div>
             </div>
           )}
           <EmbeddingProcess
             datasetId={datasetId || creationCache?.dataset?.id || ''}
             batchId={creationCache?.batch || ''}
-            documents={creationCache?.documents as FullDocumentDetail[]}
-            indexingType={indexingType || creationCache?.dataset?.indexing_technique}
+            documents={creationCache?.documents}
+            indexingType={creationCache?.dataset?.indexing_technique || indexingType}
+            retrievalMethod={retrievalMethod}
           />
         </div>
       </div>
-      {!isMobile && <div className={cn(s.sideTip)}>
-        <div className={s.tipCard}>
-          <span className={s.icon}/>
-          <div className={s.title}>{t('datasetCreation.stepThree.sideTipTitle')}</div>
-          <div className={s.content}>{t('datasetCreation.stepThree.sideTipContent')}</div>
+      <div className="shrink-0 px-4 pb-8 text-xs sm:px-8 xl:pt-22 xl:pl-0">
+        <div className="flex w-full max-w-82 flex-col gap-3 rounded-xl bg-background-section p-6 text-text-tertiary">
+          <div className="flex size-10 items-center justify-center rounded-[10px] bg-components-card-bg shadow-lg">
+            <RiBookOpenLine className="size-5 text-text-accent" />
+          </div>
+          <h2 className="text-base font-semibold text-text-secondary">
+            {t(($) => $['stepThree.sideTipTitle'], { ns: 'datasetCreation' })}
+          </h2>
+          <div className="text-text-tertiary">
+            {t(($) => $['stepThree.sideTipContent'], { ns: 'datasetCreation' })}
+          </div>
+          <a
+            href={docLink('/use-dify/knowledge/integrate-knowledge-within-application')}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="system-sm-regular text-text-accent"
+          >
+            {t(($) => $['addDocuments.stepThree.learnMore'], { ns: 'datasetPipeline' })}
+          </a>
         </div>
-      </div>}
+      </div>
     </div>
   )
 }

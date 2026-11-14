@@ -1,11 +1,12 @@
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from flask import Flask, current_app
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
+from configs import dify_config
 from core.app.apps.base_app_queue_manager import AppQueueManager, PublishFrom
 from core.app.entities.queue_entities import QueueMessageReplaceEvent
 from core.moderation.base import ModerationAction, ModerationOutputsResult
@@ -20,28 +21,24 @@ class ModerationRule(BaseModel):
 
 
 class OutputModeration(BaseModel):
-    DEFAULT_BUFFER_SIZE: int = 300
-
     tenant_id: str
     app_id: str
 
     rule: ModerationRule
     queue_manager: AppQueueManager
 
-    thread: Optional[threading.Thread] = None
+    thread: threading.Thread | None = None
     thread_running: bool = True
-    buffer: str = ''
+    buffer: str = ""
     is_final_chunk: bool = False
-    final_output: Optional[str] = None
+    final_output: str | None = None
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    class Config:
-        arbitrary_types_allowed = True
-
-    def should_direct_output(self):
+    def should_direct_output(self) -> bool:
         return self.final_output is not None
 
-    def get_final_output(self):
-        return self.final_output
+    def get_final_output(self) -> str:
+        return self.final_output or ""
 
     def append_new_token(self, token: str):
         self.buffer += token
@@ -49,40 +46,36 @@ class OutputModeration(BaseModel):
         if not self.thread:
             self.thread = self.start_thread()
 
-    def moderation_completion(self, completion: str, public_event: bool = False) -> str:
+    def moderation_completion(self, completion: str, public_event: bool = False) -> tuple[str, bool]:
         self.buffer = completion
         self.is_final_chunk = True
 
-        result = self.moderation(
-            tenant_id=self.tenant_id,
-            app_id=self.app_id,
-            moderation_buffer=completion
-        )
+        result = self.moderation(tenant_id=self.tenant_id, app_id=self.app_id, moderation_buffer=completion)
 
         if not result or not result.flagged:
-            return completion
+            return completion, False
 
-        if result.action == ModerationAction.DIRECT_OUTPUT:
-            final_output = result.preset_response
-        else:
-            final_output = result.text
+        final_output = result.preset_response if result.action == ModerationAction.DIRECT_OUTPUT else result.text
 
         if public_event:
             self.queue_manager.publish(
                 QueueMessageReplaceEvent(
-                    text=final_output
+                    text=final_output, reason=QueueMessageReplaceEvent.MessageReplaceReason.OUTPUT_MODERATION
                 ),
-                PublishFrom.TASK_PIPELINE
+                PublishFrom.TASK_PIPELINE,
             )
 
-        return final_output
+        return final_output, True
 
     def start_thread(self) -> threading.Thread:
-        buffer_size = int(current_app.config.get('MODERATION_BUFFER_SIZE', self.DEFAULT_BUFFER_SIZE))
-        thread = threading.Thread(target=self.worker, kwargs={
-            'flask_app': current_app._get_current_object(),
-            'buffer_size': buffer_size if buffer_size > 0 else self.DEFAULT_BUFFER_SIZE
-        })
+        buffer_size = dify_config.MODERATION_BUFFER_SIZE
+        thread = threading.Thread(
+            target=self.worker,
+            kwargs={
+                "flask_app": current_app._get_current_object(),  # type: ignore
+                "buffer_size": buffer_size if buffer_size > 0 else dify_config.MODERATION_BUFFER_SIZE,
+            },
+        )
 
         thread.start()
 
@@ -107,9 +100,7 @@ class OutputModeration(BaseModel):
                 current_length = buffer_length
 
                 result = self.moderation(
-                    tenant_id=self.tenant_id,
-                    app_id=self.app_id,
-                    moderation_buffer=moderation_buffer
+                    tenant_id=self.tenant_id, app_id=self.app_id, moderation_buffer=moderation_buffer
                 )
 
                 if not result or not result.flagged:
@@ -119,32 +110,29 @@ class OutputModeration(BaseModel):
                     final_output = result.preset_response
                     self.final_output = final_output
                 else:
-                    final_output = result.text + self.buffer[len(moderation_buffer):]
+                    final_output = result.text + self.buffer[len(moderation_buffer) :]
 
                 # trigger replace event
                 if self.thread_running:
                     self.queue_manager.publish(
                         QueueMessageReplaceEvent(
-                            text=final_output
+                            text=final_output, reason=QueueMessageReplaceEvent.MessageReplaceReason.OUTPUT_MODERATION
                         ),
-                        PublishFrom.TASK_PIPELINE
+                        PublishFrom.TASK_PIPELINE,
                     )
 
                 if result.action == ModerationAction.DIRECT_OUTPUT:
                     break
 
-    def moderation(self, tenant_id: str, app_id: str, moderation_buffer: str) -> Optional[ModerationOutputsResult]:
+    def moderation(self, tenant_id: str, app_id: str, moderation_buffer: str) -> ModerationOutputsResult | None:
         try:
             moderation_factory = ModerationFactory(
-                name=self.rule.type,
-                app_id=app_id,
-                tenant_id=tenant_id,
-                config=self.rule.config
+                name=self.rule.type, app_id=app_id, tenant_id=tenant_id, config=self.rule.config
             )
 
             result: ModerationOutputsResult = moderation_factory.moderation_for_outputs(moderation_buffer)
             return result
-        except Exception as e:
-            logger.error("Moderation Output error: %s", e)
+        except Exception:
+            logger.exception("Moderation Output error, app_id: %s", app_id)
 
         return None

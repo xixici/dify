@@ -1,44 +1,36 @@
 'use client'
 import type { FC } from 'react'
-import React, { useEffect } from 'react'
+import { NumberField, NumberFieldGroup, NumberFieldInput } from '@langgenius/dify-ui/number-field'
+import * as React from 'react'
+import { useEffect } from 'react'
 
-export type IConfigStringProps = {
+type IConfigStringProps = {
+  id?: string
   value: number | undefined
   maxLength: number
   modelId: string
   onChange: (value: number | undefined) => void
 }
 
-const ConfigString: FC<IConfigStringProps> = ({
-  value,
-  onChange,
-  maxLength,
-}) => {
+const ConfigString: FC<IConfigStringProps> = ({ id, value, onChange, maxLength }) => {
   useEffect(() => {
-    if (value && value > maxLength)
-      onChange(maxLength)
+    if (value && value > maxLength) onChange(maxLength)
   }, [value, maxLength, onChange])
 
   return (
-    <div>
-      <input
-        type="number"
-        max={maxLength}
-        min={1}
-        value={value || ''}
-        onChange={(e) => {
-          let value = parseInt(e.target.value, 10)
-          if (value > maxLength)
-            value = maxLength
-
-          else if (value < 1)
-            value = 1
-
-          onChange(value)
-        }}
-        className="w-full px-3 text-sm leading-9 text-gray-900 border-0 rounded-lg grow h-9 bg-gray-100 focus:outline-none focus:ring-1 focus:ring-inset focus:ring-gray-200"
-      />
-    </div>
+    <NumberField
+      id={id}
+      min={1}
+      max={maxLength}
+      step={1}
+      format={{ maximumFractionDigits: 0, useGrouping: false }}
+      value={value ?? null}
+      onValueChange={(value) => onChange(value ?? undefined)}
+    >
+      <NumberFieldGroup>
+        <NumberFieldInput />
+      </NumberFieldGroup>
+    </NumberField>
   )
 }
 

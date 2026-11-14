@@ -1,31 +1,40 @@
-import { useCallback, useEffect, useState } from 'react'
-import produce from 'immer'
-import useVarList from '../_base/hooks/use-var-list'
-import useOutputVarList from '../_base/hooks/use-output-var-list'
-import { BlockEnum, VarType } from '../../types'
-import type { Var } from '../../types'
-import { useStore } from '../../store'
+import type { Var, Variable } from '../../types'
 import type { CodeNodeType, OutputVar } from './types'
-import { CodeLanguage } from './types'
-import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
-import useOneStepRun from '@/app/components/workflow/nodes/_base/hooks/use-one-step-run'
-import { fetchNodeDefault } from '@/service/workflow'
-import { useStore as useAppStore } from '@/app/components/app/store'
+import { produce } from 'immer'
+import { useAtomValue } from 'jotai'
+import { useCallback, useEffect, useState } from 'react'
 import {
-  useNodesReadOnly,
-} from '@/app/components/workflow/hooks'
+  editorAppIdAtom,
+  editorPipelineIdAtom,
+} from '@/app/components/workflow/editor-resource/state'
+import useNodeCrud from '@/app/components/workflow/nodes/_base/hooks/use-node-crud'
+import { fetchNodeDefault, fetchPipelineNodeDefault } from '@/service/workflow'
+import { useNodesReadOnly } from '../../hooks/use-workflow'
+import { useStore } from '../../store'
+import { BlockEnum, VarType } from '../../types'
+import useOutputVarList from '../_base/hooks/use-output-var-list'
+import useVarList from '../_base/hooks/use-var-list'
+import { CodeLanguage } from './types'
 
 const useConfig = (id: string, payload: CodeNodeType) => {
   const { nodesReadOnly: readOnly } = useNodesReadOnly()
 
-  const appId = useAppStore.getState().appDetail?.id
+  const appId = useAtomValue(editorAppIdAtom)
+  const pipelineId = useAtomValue(editorPipelineIdAtom)
 
-  const [allLanguageDefault, setAllLanguageDefault] = useState<Record<CodeLanguage, CodeNodeType> | null>(null)
+  const [allLanguageDefault, setAllLanguageDefault] = useState<Record<
+    CodeLanguage,
+    CodeNodeType
+  > | null>(null)
   useEffect(() => {
     if (appId) {
-      (async () => {
-        const { config: javaScriptConfig } = await fetchNodeDefault(appId, BlockEnum.Code, { code_language: CodeLanguage.javascript }) as any
-        const { config: pythonConfig } = await fetchNodeDefault(appId, BlockEnum.Code, { code_language: CodeLanguage.python3 }) as any
+      ;(async () => {
+        const { config: javaScriptConfig } = (await fetchNodeDefault(appId, BlockEnum.Code, {
+          code_language: CodeLanguage.javascript,
+        })) as any
+        const { config: pythonConfig } = (await fetchNodeDefault(appId, BlockEnum.Code, {
+          code_language: CodeLanguage.python3,
+        })) as any
         setAllLanguageDefault({
           [CodeLanguage.javascript]: javaScriptConfig as CodeNodeType,
           [CodeLanguage.python3]: pythonConfig as CodeNodeType,
@@ -34,7 +43,28 @@ const useConfig = (id: string, payload: CodeNodeType) => {
     }
   }, [appId])
 
-  const defaultConfig = useStore(s => s.nodesDefaultConfigs)[payload.type]
+  useEffect(() => {
+    if (pipelineId) {
+      ;(async () => {
+        const { config: javaScriptConfig } = (await fetchPipelineNodeDefault(
+          pipelineId,
+          BlockEnum.Code,
+          { code_language: CodeLanguage.javascript },
+        )) as any
+        const { config: pythonConfig } = (await fetchPipelineNodeDefault(
+          pipelineId,
+          BlockEnum.Code,
+          { code_language: CodeLanguage.python3 },
+        )) as any
+        setAllLanguageDefault({
+          [CodeLanguage.javascript]: javaScriptConfig as CodeNodeType,
+          [CodeLanguage.python3]: pythonConfig as CodeNodeType,
+        } as any)
+      })()
+    }
+  }, [pipelineId])
+
+  const defaultConfig = useStore((s) => s.nodesDefaultConfigs)?.[payload.type]
   const { inputs, setInputs } = useNodeCrud<CodeNodeType>(id, payload)
   const { handleVarListChange, handleAddVariable } = useVarList<CodeNodeType>({
     inputs,
@@ -61,29 +91,91 @@ const useConfig = (id: string, payload: CodeNodeType) => {
       })
       syncOutputKeyOrders(defaultConfig.outputs)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultConfig])
 
-  const handleCodeChange = useCallback((code: string) => {
+  const handleCodeChange = useCallback(
+    (code: string) => {
+      const newInputs = produce(inputs, (draft) => {
+        draft.code = code
+      })
+      setInputs(newInputs)
+    },
+    [inputs, setInputs],
+  )
+
+  const handleCodeLanguageChange = useCallback(
+    (codeLanguage: CodeLanguage) => {
+      const currDefaultConfig = allLanguageDefault?.[codeLanguage]
+
+      const newInputs = produce(inputs, (draft) => {
+        draft.code_language = codeLanguage
+        if (!currDefaultConfig) return
+        draft.code = currDefaultConfig.code
+        draft.variables = currDefaultConfig.variables
+        draft.outputs = currDefaultConfig.outputs
+      })
+      setInputs(newInputs)
+    },
+    [allLanguageDefault, inputs, setInputs],
+  )
+
+  const handleSyncFunctionSignature = useCallback(() => {
+    const generateSyncSignatureCode = (code: string) => {
+      let mainDefRe
+      let newMainDef
+      if (inputs.code_language === CodeLanguage.javascript) {
+        mainDefRe = /function\s+main\s*\([\s\S]*?\)/g
+        newMainDef = 'function main({{var_list}})'
+        let param_list = inputs.variables?.map((item) => item.variable).join(', ') || ''
+        param_list = param_list ? `{${param_list}}` : ''
+        newMainDef = newMainDef.replace('{{var_list}}', param_list)
+      } else if (inputs.code_language === CodeLanguage.python3) {
+        mainDefRe = /def\s+main\s*\([\s\S]*?\)/g
+        const param_list = []
+        for (const item of inputs.variables) {
+          let param = item.variable
+          let param_type = ''
+          switch (item.value_type) {
+            case VarType.string:
+              param_type = ': str'
+              break
+            case VarType.number:
+              param_type = ': float'
+              break
+            case VarType.object:
+              param_type = ': dict'
+              break
+            case VarType.array:
+              param_type = ': list'
+              break
+            case VarType.arrayNumber:
+              param_type = ': list[float]'
+              break
+            case VarType.arrayString:
+              param_type = ': list[str]'
+              break
+            case VarType.arrayObject:
+              param_type = ': list[dict]'
+              break
+          }
+          param += param_type
+          param_list.push(`${param}`)
+        }
+
+        newMainDef = `def main(${param_list.join(', ')})`
+      } else {
+        return code
+      }
+
+      const newCode = code.replace(mainDefRe, newMainDef)
+      return newCode
+    }
+
     const newInputs = produce(inputs, (draft) => {
-      draft.code = code
+      draft.code = generateSyncSignatureCode(draft.code)
     })
     setInputs(newInputs)
   }, [inputs, setInputs])
-
-  const handleCodeLanguageChange = useCallback((codeLanguage: CodeLanguage) => {
-    const currDefaultConfig = allLanguageDefault?.[codeLanguage]
-
-    const newInputs = produce(inputs, (draft) => {
-      draft.code_language = codeLanguage
-      if (!currDefaultConfig)
-        return
-      draft.code = currDefaultConfig.code
-      draft.variables = currDefaultConfig.variables
-      draft.outputs = currDefaultConfig.outputs
-    })
-    setInputs(newInputs)
-  }, [allLanguageDefault, inputs, setInputs])
 
   const {
     handleVarsChange,
@@ -101,42 +193,37 @@ const useConfig = (id: string, payload: CodeNodeType) => {
   })
 
   const filterVar = useCallback((varPayload: Var) => {
-    return [VarType.string, VarType.number, VarType.object, VarType.array, VarType.arrayNumber, VarType.arrayString, VarType.arrayObject].includes(varPayload.type)
+    const supportedVariableTypes: readonly VarType[] = [
+      VarType.string,
+      VarType.number,
+      VarType.integer,
+      VarType.boolean,
+      VarType.secret,
+      VarType.object,
+      VarType.array,
+      VarType.arrayNumber,
+      VarType.arrayString,
+      VarType.arrayObject,
+      VarType.arrayBoolean,
+      VarType.file,
+      VarType.arrayFile,
+    ]
+
+    return supportedVariableTypes.includes(varPayload.type)
   }, [])
 
-  // single run
-  const {
-    isShowSingleRun,
-    hideSingleRun,
-    toVarInputs,
-    runningStatus,
-    isCompleted,
-    handleRun,
-    handleStop,
-    runInputData,
-    setRunInputData,
-    runResult,
-  } = useOneStepRun<CodeNodeType>({
-    id,
-    data: inputs,
-    defaultRunInputData: {},
-  })
-
-  const varInputs = toVarInputs(inputs.variables)
-
-  const inputVarValues = (() => {
-    const vars: Record<string, any> = {}
-    Object.keys(runInputData)
-      .forEach((key) => {
-        vars[key] = runInputData[key]
+  const handleCodeAndVarsChange = useCallback(
+    (code: string, inputVariables: Variable[], outputVariables: OutputVar) => {
+      const newInputs = produce(inputs, (draft) => {
+        draft.code = code
+        draft.variables = inputVariables
+        draft.outputs = outputVariables
       })
-    return vars
-  })()
-
-  const setInputVarValues = useCallback((newPayload: Record<string, any>) => {
-    setRunInputData(newPayload)
-  }, [setRunInputData])
-
+      setInputs(newInputs)
+      syncOutputKeyOrders(outputVariables)
+    },
+    [inputs, setInputs, syncOutputKeyOrders],
+  )
   return {
     readOnly,
     inputs,
@@ -144,6 +231,7 @@ const useConfig = (id: string, payload: CodeNodeType) => {
     handleVarListChange,
     handleAddVariable,
     handleRemoveVariable,
+    handleSyncFunctionSignature,
     handleCodeChange,
     handleCodeLanguageChange,
     handleVarsChange,
@@ -152,17 +240,7 @@ const useConfig = (id: string, payload: CodeNodeType) => {
     isShowRemoveVarConfirm,
     hideRemoveVarConfirm,
     onRemoveVarConfirm,
-    // single run
-    isShowSingleRun,
-    hideSingleRun,
-    runningStatus,
-    isCompleted,
-    handleRun,
-    handleStop,
-    varInputs,
-    inputVarValues,
-    setInputVarValues,
-    runResult,
+    handleCodeAndVarsChange,
   }
 }
 

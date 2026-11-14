@@ -1,52 +1,110 @@
 'use client'
+import type { OnMount } from '@monaco-editor/react'
 import type { FC } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
 import Editor, { loader } from '@monaco-editor/react'
-import React, { useRef } from 'react'
-import Base from '../base'
+import { noop } from 'es-toolkit/function'
+import * as React from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { getFilesInLogs } from '@/app/components/base/file-uploader/utils'
 import { CodeLanguage } from '@/app/components/workflow/nodes/code/types'
+import { useResolvedTheme } from '@/features/theme/hooks'
+import { basePath } from '@/utils/var'
+import Base from '../base'
+import { serializeCodeEditorValue } from './utils'
 import './style.css'
 
 // load file from local instead of cdn https://github.com/suren-atoyan/monaco-react/issues/482
-loader.config({ paths: { vs: '/vs' } })
+if (typeof window !== 'undefined')
+  loader.config({ paths: { vs: `${window.location.origin}${basePath}/vs` } })
 
-type Props = {
+const CODE_EDITOR_LINE_HEIGHT = 18
+
+export type Props = Readonly<{
+  nodeId?: string
   value?: string | object
+  placeholder?: React.JSX.Element | string
   onChange?: (value: string) => void
-  title: JSX.Element
+  title?: string | React.JSX.Element
   language: CodeLanguage
-  headerRight?: JSX.Element
+  headerRight?: React.JSX.Element
   readOnly?: boolean
   isJSONStringifyBeauty?: boolean
   height?: number
   isInNode?: boolean
-}
+  onMount?: OnMount
+  noWrapper?: boolean
+  isExpand?: boolean
+  showFileList?: boolean
+  onGenerated?: (value: string) => void
+  showCodeGenerator?: boolean
+  className?: string
+  tip?: React.JSX.Element
+  footer?: React.ReactNode
+}>
 
-const languageMap = {
+export const languageMap = {
   [CodeLanguage.javascript]: 'javascript',
   [CodeLanguage.python3]: 'python',
   [CodeLanguage.json]: 'json',
 }
 
 const CodeEditor: FC<Props> = ({
+  nodeId,
   value = '',
-  onChange = () => { },
-  title,
+  placeholder = '',
+  onChange = noop,
+  title = '',
   headerRight,
   language,
   readOnly,
   isJSONStringifyBeauty,
   height,
   isInNode,
+  onMount,
+  noWrapper,
+  isExpand,
+  showFileList,
+  onGenerated,
+  showCodeGenerator = false,
+  className,
+  tip,
+  footer,
 }) => {
   const [isFocus, setIsFocus] = React.useState(false)
+  const [isMounted, setIsMounted] = React.useState(false)
+  const minHeight = height || 200
+  const [editorContentHeight, setEditorContentHeight] = useState(56)
+  const appTheme = useResolvedTheme()
+  const valueRef = useRef(value)
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
+
+  const fileList = useMemo(() => {
+    if (typeof value === 'object') return getFilesInLogs(value)
+    return []
+  }, [value])
+
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
+  const resizeEditorToContent = () => {
+    if (editorRef.current) {
+      const contentHeight = editorRef.current.getContentHeight() // Math.max(, minHeight)
+      setEditorContentHeight(contentHeight)
+    }
+  }
 
   const handleEditorChange = (value: string | undefined) => {
     onChange(value || '')
+    setTimeout(() => {
+      resizeEditorToContent()
+    }, 10)
   }
 
-  const editorRef = useRef(null)
-  const handleEditorDidMount = (editor: any, monaco: any) => {
+  const handleEditorDidMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
+    resizeEditorToContent()
+
     editor.onDidFocusEditorText(() => {
       setIsFocus(true)
     })
@@ -54,71 +112,90 @@ const CodeEditor: FC<Props> = ({
       setIsFocus(false)
     })
 
-    monaco.editor.defineTheme('blur-theme', {
-      base: 'vs',
-      inherit: true,
-      rules: [],
-      colors: {
-        'editor.background': '#F2F4F7',
-      },
-    })
+    monaco.editor.setTheme(appTheme === 'light' ? 'light' : 'vs-dark') // Fix: sometimes not load the default theme
 
-    monaco.editor.defineTheme('focus-theme', {
-      base: 'vs',
-      inherit: true,
-      rules: [],
-      colors: {
-        'editor.background': '#ffffff',
-      },
-    })
+    onMount?.(editor, monaco)
+    setIsMounted(true)
   }
 
-  const outPutValue = (() => {
-    if (!isJSONStringifyBeauty)
-      return value as string
-    try {
-      return JSON.stringify(value as object, null, 2)
-    }
-    catch (e) {
-      return value as string
-    }
-  })()
+  const outPutValue = serializeCodeEditorValue(value, isJSONStringifyBeauty)
+
+  const theme = useMemo(() => {
+    if (appTheme === 'light') return 'light'
+    return 'vs-dark'
+  }, [appTheme])
+
+  const main = (
+    <>
+      {/* https://www.npmjs.com/package/@monaco-editor/react */}
+      <Editor
+        // className='min-h-full' // h-full
+        // language={language === CodeLanguage.javascript ? 'javascript' : 'python'}
+        language={languageMap[language] || 'javascript'}
+        theme={isMounted ? theme : 'default-theme'} // sometimes not load the default theme
+        value={outPutValue}
+        loading={<span className="text-text-primary">Loading...</span>}
+        onChange={handleEditorChange}
+        // https://microsoft.github.io/monaco-editor/typedoc/interfaces/editor.IEditorOptions.html
+        options={{
+          readOnly,
+          domReadOnly: true,
+          quickSuggestions: false,
+          minimap: { enabled: false },
+          lineNumbersMinChars: 1, // would change line num width
+          wordWrap: 'on', // auto line wrap
+          // lineNumbers: (num) => {
+          //   return <div>{num}</div>
+          // }
+          // hide ambiguousCharacters warning
+          unicodeHighlight: {
+            ambiguousCharacters: false,
+          },
+          stickyScroll: { enabled: false },
+        }}
+        onMount={handleEditorDidMount}
+      />
+      {!outPutValue && !isFocus && (
+        <div className="pointer-events-none absolute inset-s-9 top-0 text-[13px] leading-4.5 font-normal text-components-input-text-placeholder">
+          {placeholder}
+        </div>
+      )}
+    </>
+  )
 
   return (
-    <div>
-      <Base
-        title={title}
-        value={outPutValue}
-        headerRight={headerRight}
-        isFocus={isFocus && !readOnly}
-        minHeight={height || 200}
-        isInNode={isInNode}
-      >
-        <>
-          {/* https://www.npmjs.com/package/@monaco-editor/react */}
-          <Editor
-            className='h-full'
-            // language={language === CodeLanguage.javascript ? 'javascript' : 'python'}
-            language={languageMap[language] || 'javascript'}
-            theme={isFocus ? 'focus-theme' : 'blur-theme'}
-            value={outPutValue}
-            onChange={handleEditorChange}
-            // https://microsoft.github.io/monaco-editor/typedoc/interfaces/editor.IEditorOptions.html
-            options={{
-              readOnly,
-              domReadOnly: true,
-              quickSuggestions: false,
-              minimap: { enabled: false },
-              lineNumbersMinChars: 1, // would change line num width
-              wordWrap: 'on', // auto line wrap
-              // lineNumbers: (num) => {
-              //   return <div>{num}</div>
-              // }
-            }}
-            onMount={handleEditorDidMount}
-          />
-        </>
-      </Base>
+    <div className={cn(isExpand && 'h-full', className)}>
+      {noWrapper ? (
+        <div
+          className="no-wrapper relative"
+          style={{
+            height: isExpand ? '100%' : editorContentHeight / 2 + CODE_EDITOR_LINE_HEIGHT, // In IDE, the last line can always be in lop line. So there is some blank space in the bottom.
+            minHeight: CODE_EDITOR_LINE_HEIGHT,
+          }}
+        >
+          {main}
+        </div>
+      ) : (
+        <Base
+          nodeId={nodeId}
+          className="relative"
+          title={title}
+          value={outPutValue}
+          headerRight={headerRight}
+          isFocus={isFocus && !readOnly}
+          minHeight={minHeight}
+          isInNode={isInNode}
+          onGenerated={onGenerated}
+          codeLanguages={language}
+          fileList={fileList as any}
+          showFileList={showFileList}
+          showCodeGenerator={showCodeGenerator}
+          tip={tip}
+          footer={footer}
+        >
+          {main}
+        </Base>
+      )}
     </div>
   )
 }

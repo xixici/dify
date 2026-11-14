@@ -1,25 +1,47 @@
 'use client'
 import type { FC } from 'react'
-import React, { useCallback, useRef, useState } from 'react'
+import type { CodeLanguage } from '../../../code/types'
+import type { FileEntity } from '@/app/components/base/file-uploader/types'
+import type { Node, NodeOutPutVar } from '@/app/components/workflow/types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { IconButton } from '@langgenius/dify-ui/icon-button'
 import copy from 'copy-to-clipboard'
-import cn from 'classnames'
+import * as React from 'react'
+import { useCallback, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import PromptEditorHeightResizeWrap from '@/app/components/app/configuration/config-prompt/prompt-editor-height-resize-wrap'
-import { Clipboard, ClipboardCheck } from '@/app/components/base/icons/src/vender/line/files'
-import ToggleExpandBtn from '@/app/components/workflow/nodes/_base/components/toggle-expand-btn'
+import FileListInLog from '@/app/components/base/file-uploader/file-list-in-log'
 import useToggleExpend from '@/app/components/workflow/nodes/_base/hooks/use-toggle-expend'
+import CodeGeneratorButton from '../code-generator-button'
+import ToggleExpandBtn from '../toggle-expand-btn'
+import Wrap from './wrap'
 
-type Props = {
+type Props = Readonly<{
+  nodeId?: string
   className?: string
-  title: JSX.Element | string
-  headerRight?: JSX.Element
-  children: JSX.Element
+  title: React.JSX.Element | string
+  headerRight?: React.JSX.Element
+  children: React.JSX.Element
   minHeight?: number
   value: string
   isFocus: boolean
   isInNode?: boolean
-}
+  onGenerated?: (prompt: string) => void
+  codeLanguages?: CodeLanguage
+  fileList?: {
+    varName: string
+    list: FileEntity[]
+  }[]
+  showFileList?: boolean
+  showCodeGenerator?: boolean
+  tip?: React.JSX.Element
+  nodesOutputVars?: NodeOutPutVar[]
+  availableNodes?: Node[]
+  footer?: React.ReactNode
+}>
 
 const Base: FC<Props> = ({
+  nodeId,
   className,
   title,
   headerRight,
@@ -28,15 +50,21 @@ const Base: FC<Props> = ({
   value,
   isFocus,
   isInNode,
+  onGenerated,
+  codeLanguages,
+  fileList = [],
+  showFileList,
+  showCodeGenerator = false,
+  tip,
+  footer,
 }) => {
+  const { t } = useTranslation(['common'])
   const ref = useRef<HTMLDivElement>(null)
-  const {
-    wrapClassName,
-    wrapStyle,
-    isExpand,
-    setIsExpand,
-    editorExpandHeight,
-  } = useToggleExpend({ ref, hasFooter: false, isInNode })
+  const { wrapClassName, wrapStyle, isExpand, setIsExpand, editorExpandHeight } = useToggleExpend({
+    ref,
+    hasFooter: false,
+    isInNode,
+  })
 
   const editorContentMinHeight = minHeight - 28
   const [editorContentHeight, setEditorContentHeight] = useState(editorContentMinHeight)
@@ -45,40 +73,75 @@ const Base: FC<Props> = ({
   const handleCopy = useCallback(() => {
     copy(value)
     setIsCopied(true)
+    setTimeout(() => {
+      setIsCopied(false)
+    }, 2000)
   }, [value])
 
   return (
-    <div className={cn(wrapClassName)} style={wrapStyle}>
-      <div ref={ref} className={cn(className, isExpand && 'h-full', 'rounded-lg border', isFocus ? 'bg-white border-gray-200' : 'bg-gray-100 border-gray-100 overflow-hidden')}>
-        <div className='flex justify-between items-center h-7 pt-1 pl-3 pr-2'>
-          <div className='text-xs font-semibold text-gray-700'>{title}</div>
-          <div className='flex items-center' onClick={e => e.stopPropagation()}>
+    <Wrap className={cn(wrapClassName)} style={wrapStyle} isInNode={isInNode} isExpand={isExpand}>
+      <div
+        ref={ref}
+        className={cn(
+          className,
+          isExpand ? 'h-full border-0' : 'rounded-lg border',
+          !isFocus
+            ? 'border-transparent bg-components-input-bg-normal'
+            : 'overflow-hidden border-components-input-border-hover bg-components-input-bg-hover',
+        )}
+      >
+        <div className="flex h-7 items-center justify-between pt-1 pr-2 pl-3">
+          <div className="system-xs-semibold-uppercase text-text-secondary">{title}</div>
+          <div
+            className="flex items-center"
+            onClick={(e) => {
+              e.nativeEvent.stopImmediatePropagation()
+              e.stopPropagation()
+            }}
+          >
             {headerRight}
-            {!isCopied
-              ? (
-                <Clipboard className='mx-1 w-3.5 h-3.5 text-gray-500 cursor-pointer' onClick={handleCopy} />
-              )
-              : (
-                <ClipboardCheck className='mx-1 w-3.5 h-3.5 text-gray-500' />
-              )
-            }
-            <div className='ml-1'>
+            {!!(showCodeGenerator && codeLanguages) && (
+              <div className="ml-1">
+                <CodeGeneratorButton
+                  onGenerated={onGenerated}
+                  codeLanguages={codeLanguages}
+                  currentCode={value}
+                  nodeId={nodeId!}
+                />
+              </div>
+            )}
+            <IconButton
+              aria-label={t(($) => $['operation.copy'], { ns: 'common' })}
+              className="ml-1"
+              onClick={handleCopy}
+            >
+              {!isCopied ? (
+                <span
+                  aria-hidden="true"
+                  className="i-custom-vender-line-files-copy size-4 cursor-pointer"
+                />
+              ) : (
+                <span aria-hidden="true" className="i-custom-vender-line-files-copy-check size-4" />
+              )}
+            </IconButton>
+            <div className="ml-1">
               <ToggleExpandBtn isExpand={isExpand} onExpandChange={setIsExpand} />
             </div>
           </div>
         </div>
+        {!!tip && <div className="px-1 py-0.5">{tip}</div>}
         <PromptEditorHeightResizeWrap
           height={isExpand ? editorExpandHeight : editorContentHeight}
           minHeight={editorContentMinHeight}
           onHeightChange={setEditorContentHeight}
           hideResize={isExpand}
         >
-          <div className='h-full pb-2'>
-            {children}
-          </div>
+          <div className="h-full pb-2 pl-2">{children}</div>
         </PromptEditorHeightResizeWrap>
+        {showFileList && fileList.length > 0 && <FileListInLog fileList={fileList} />}
+        {footer}
       </div>
-    </div>
+    </Wrap>
   )
 }
 export default React.memo(Base)

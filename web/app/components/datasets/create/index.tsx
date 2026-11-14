@@ -1,145 +1,225 @@
 'use client'
-import React, { useCallback, useEffect, useState } from 'react'
+
+import type { DatasetAndDocumentResponse } from '@dify/contracts/api/console/datasets/types.gen'
+import type { NotionPage } from '@/models/common'
+import type { CrawlOptions, CrawlResultItem, FileItem } from '@/models/datasets'
+import type { RETRIEVE_METHOD } from '@/types/app'
+import { useQuery, useSuspenseQuery } from '@tanstack/react-query'
+import { produce } from 'immer'
+import { useAtomValue } from 'jotai'
+import { useQueryState } from 'nuqs'
+import * as React from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { LoadingPlaceholder } from '@/app/components/base/loading-placeholder'
+import { useDefaultModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import {
+  settingsQueryParamName,
+  settingsQueryParser,
+} from '@/app/components/header/account-setting/query-params'
+import { useDatasetDetailContextWithSelector } from '@/context/dataset-detail'
+import {
+  workspacePermissionKeysAtom,
+  workspacePermissionKeysLoadingAtom,
+} from '@/context/permission-state'
+import { userProfileQueryOptions } from '@/features/account-profile/client'
+import { DataSourceProvider } from '@/models/common'
+import { DataSourceType } from '@/models/datasets'
+import { useRouter } from '@/next/navigation'
+import { consoleQuery } from '@/service/console'
+import { getDatasetACLCapabilities } from '@/utils/permission'
 import AppUnavailable from '../../base/app-unavailable'
 import { ModelTypeEnum } from '../../header/account-setting/model-provider-page/declarations'
-import StepsNavBar from './steps-nav-bar'
 import StepOne from './step-one'
-import StepTwo from './step-two'
 import StepThree from './step-three'
-import { DataSourceType } from '@/models/datasets'
-import type { DataSet, FileItem, createDocumentResponse } from '@/models/datasets'
-import { fetchDataSource } from '@/service/common'
-import { fetchDatasetDetail } from '@/service/datasets'
-import type { NotionPage } from '@/models/common'
-import { useModalContext } from '@/context/modal-context'
-import { useDefaultModel } from '@/app/components/header/account-setting/model-provider-page/hooks'
+import StepTwo from './step-two'
+import { TopBar } from './top-bar'
 
 type DatasetUpdateFormProps = {
   datasetId?: string
 }
 
+const DEFAULT_CRAWL_OPTIONS: CrawlOptions = {
+  crawl_sub_pages: true,
+  only_main_content: true,
+  includes: '',
+  excludes: '',
+  limit: 10,
+  max_depth: '',
+  use_sitemap: true,
+}
+
 const DatasetUpdateForm = ({ datasetId }: DatasetUpdateFormProps) => {
-  const { t } = useTranslation()
-  const { setShowAccountSettingModal } = useModalContext()
-  const [hasConnection, setHasConnection] = useState(true)
+  const { t } = useTranslation(['datasetCreation'])
+  const router = useRouter()
+  const [, setSettingsDestination] = useQueryState(settingsQueryParamName, settingsQueryParser)
+  const datasetDetail = useDatasetDetailContextWithSelector((state) => state.dataset)
+  const { data: currentUserId } = useSuspenseQuery({
+    ...userProfileQueryOptions(),
+    select: (data) => data.profile.id,
+  })
+  const isLoadingWorkspacePermissionKeys = useAtomValue(workspacePermissionKeysLoadingAtom)
+  const workspacePermissionKeys = useAtomValue(workspacePermissionKeysAtom)
+  const { data: embeddingsDefaultModel } = useDefaultModel(ModelTypeEnum.textEmbedding)
+  const canAddDocumentsToDataset =
+    !datasetId ||
+    getDatasetACLCapabilities(datasetDetail?.permission_keys, {
+      currentUserId,
+      resourceMaintainer: datasetDetail?.maintainer,
+      workspacePermissionKeys,
+    }).canUse
+  const shouldRedirectToDocuments =
+    !!datasetId && !!datasetDetail && !isLoadingWorkspacePermissionKeys && !canAddDocumentsToDataset
+
   const [dataSourceType, setDataSourceType] = useState<DataSourceType>(DataSourceType.FILE)
   const [step, setStep] = useState(1)
   const [indexingTypeCache, setIndexTypeCache] = useState('')
+  const [retrievalMethodCache, setRetrievalMethodCache] = useState<RETRIEVE_METHOD | ''>('')
   const [fileList, setFiles] = useState<FileItem[]>([])
-  const [result, setResult] = useState<createDocumentResponse | undefined>()
-  const [hasError, setHasError] = useState(false)
-  const { data: embeddingsDefaultModel } = useDefaultModel(ModelTypeEnum.textEmbedding)
-
+  const [result, setResult] = useState<DatasetAndDocumentResponse | undefined>()
   const [notionPages, setNotionPages] = useState<NotionPage[]>([])
-  const updateNotionPages = (value: NotionPage[]) => {
+  const [notionCredentialId, setNotionCredentialId] = useState<string>('')
+  const [websitePages, setWebsitePages] = useState<CrawlResultItem[]>([])
+  const [crawlOptions, setCrawlOptions] = useState<CrawlOptions>(DEFAULT_CRAWL_OPTIONS)
+  const [websiteCrawlProvider, setWebsiteCrawlProvider] = useState<DataSourceProvider>(
+    DataSourceProvider.jinaReader,
+  )
+  const [websiteCrawlJobId, setWebsiteCrawlJobId] = useState('')
+
+  const {
+    data: dataSourceList,
+    isLoading: isLoadingAuthedDataSourceList,
+    isError: fetchingAuthedDataSourceListError,
+  } = useQuery(consoleQuery.auth.plugin.datasource.defaultList.get.queryOptions())
+
+  const updateNotionPages = useCallback((value: NotionPage[]) => {
     setNotionPages(value)
-  }
+  }, [])
 
-  const updateFileList = (preparedFiles: FileItem[]) => {
+  const updateNotionCredentialId = useCallback((credentialId: string) => {
+    setNotionCredentialId(credentialId)
+  }, [])
+
+  const updateFileList = useCallback((preparedFiles: FileItem[]) => {
     setFiles(preparedFiles)
-  }
+  }, [])
 
-  const updateFile = (fileItem: FileItem, progress: number, list: FileItem[]) => {
-    const targetIndex = list.findIndex(file => file.fileID === fileItem.fileID)
-    list[targetIndex] = {
-      ...list[targetIndex],
-      progress,
-    }
-    setFiles([...list])
-    // use follow code would cause dirty list update problem
-    // const newList = list.map((file) => {
-    //   if (file.fileID === fileItem.fileID) {
-    //     return {
-    //       ...fileItem,
-    //       progress,
-    //     }
-    //   }
-    //   return file
-    // })
-    // setFiles(newList)
-  }
-  const updateIndexingTypeCache = (type: string) => {
+  const updateFile = useCallback((fileItem: FileItem, progress: number, list: FileItem[]) => {
+    const targetIndex = list.findIndex((file) => file.fileID === fileItem.fileID)
+    const newList = produce(list, (draft) => {
+      draft[targetIndex] = {
+        ...draft[targetIndex]!,
+        progress,
+      }
+    })
+    setFiles(newList)
+  }, [])
+
+  const updateIndexingTypeCache = useCallback((type: string) => {
     setIndexTypeCache(type)
-  }
-  const updateResultCache = (res?: createDocumentResponse) => {
+  }, [])
+
+  const updateResultCache = useCallback((res?: DatasetAndDocumentResponse) => {
     setResult(res)
-  }
+  }, [])
+
+  const updateRetrievalMethodCache = useCallback((method: RETRIEVE_METHOD | '') => {
+    setRetrievalMethodCache(method)
+  }, [])
 
   const nextStep = useCallback(() => {
     setStep(step + 1)
   }, [step, setStep])
 
-  const changeStep = useCallback((delta: number) => {
-    setStep(step + delta)
-  }, [step, setStep])
-
-  const checkNotionConnection = async () => {
-    const { data } = await fetchDataSource({ url: '/data-source/integrates' })
-    const hasConnection = data.filter(item => item.provider === 'notion') || []
-    setHasConnection(hasConnection.length > 0)
-  }
+  const changeStep = useCallback(
+    (delta: number) => {
+      setStep(step + delta)
+    },
+    [step, setStep],
+  )
 
   useEffect(() => {
-    checkNotionConnection()
-  }, [])
+    if (shouldRedirectToDocuments && datasetId) router.replace(`/datasets/${datasetId}/documents`)
+  }, [datasetId, router, shouldRedirectToDocuments])
 
-  const [detail, setDetail] = useState<DataSet | null>(null)
-  useEffect(() => {
-    (async () => {
-      if (datasetId) {
-        try {
-          const detail = await fetchDatasetDetail(datasetId)
-          setDetail(detail)
-        }
-        catch (e) {
-          setHasError(true)
-        }
-      }
-    })()
-  }, [datasetId])
+  if ((!!datasetId && isLoadingWorkspacePermissionKeys) || shouldRedirectToDocuments)
+    return <LoadingPlaceholder className="h-full" />
 
-  if (hasError)
-    return <AppUnavailable code={500} unknownReason={t('datasetCreation.error.unavailable') as string} />
+  if (fetchingAuthedDataSourceListError)
+    return (
+      <AppUnavailable
+        code={500}
+        unknownReason={t(($) => $['error.unavailable'], { ns: 'datasetCreation' }) as string}
+      />
+    )
 
   return (
-    <div className='flex' style={{ height: 'calc(100vh - 56px)' }}>
-      <div className="flex flex-col w-11 sm:w-56 overflow-y-auto bg-white border-r border-gray-200 shrink-0">
-        <StepsNavBar step={step} datasetId={datasetId} />
-      </div>
-      <div className="grow bg-white">
-        {step === 1 && <StepOne
-          hasConnection={hasConnection}
-          onSetting={() => setShowAccountSettingModal({ payload: 'data-source' })}
-          datasetId={datasetId}
-          dataSourceType={dataSourceType}
-          dataSourceTypeDisable={!!detail?.data_source_type}
-          changeType={setDataSourceType}
-          files={fileList}
-          updateFile={updateFile}
-          updateFileList={updateFileList}
-          notionPages={notionPages}
-          updateNotionPages={updateNotionPages}
-          onStepChange={nextStep}
-        />}
-        {(step === 2 && (!datasetId || (datasetId && !!detail))) && <StepTwo
-          hasSetAPIKEY={!!embeddingsDefaultModel}
-          onSetting={() => setShowAccountSettingModal({ payload: 'provider' })}
-          indexingType={detail?.indexing_technique}
-          datasetId={datasetId}
-          dataSourceType={dataSourceType}
-          files={fileList.map(file => file.file)}
-          notionPages={notionPages}
-          onStepChange={changeStep}
-          updateIndexingTypeCache={updateIndexingTypeCache}
-          updateResultCache={updateResultCache}
-        />}
-        {step === 3 && <StepThree
-          datasetId={datasetId}
-          datasetName={detail?.name}
-          indexingType={detail?.indexing_technique || indexingTypeCache}
-          creationCache={result}
-        />}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-components-panel-bg">
+      <TopBar activeIndex={step - 1} datasetId={datasetId} />
+      <div className="min-h-0 flex-1">
+        {isLoadingAuthedDataSourceList && <LoadingPlaceholder className="h-full" />}
+        {!isLoadingAuthedDataSourceList && (
+          <>
+            {step === 1 && (
+              <StepOne
+                authedDataSourceList={dataSourceList?.result || []}
+                onSetting={() => setSettingsDestination('data-source')}
+                datasetId={datasetId}
+                dataSourceType={dataSourceType}
+                dataSourceTypeDisable={!!datasetDetail?.data_source_type}
+                changeType={setDataSourceType}
+                files={fileList}
+                updateFile={updateFile}
+                updateFileList={updateFileList}
+                notionPages={notionPages}
+                notionCredentialId={notionCredentialId}
+                updateNotionPages={updateNotionPages}
+                updateNotionCredentialId={updateNotionCredentialId}
+                onStepChange={nextStep}
+                websitePages={websitePages}
+                updateWebsitePages={setWebsitePages}
+                onWebsiteCrawlProviderChange={setWebsiteCrawlProvider}
+                onWebsiteCrawlJobIdChange={setWebsiteCrawlJobId}
+                crawlOptions={crawlOptions}
+                onCrawlOptionsChange={setCrawlOptions}
+              />
+            )}
+            {step === 2 && (!datasetId || (datasetId && !!datasetDetail)) && (
+              <StepTwo
+                isAPIKeySet={!!embeddingsDefaultModel}
+                onSetting={() => setSettingsDestination('provider')}
+                indexingType={datasetDetail?.indexing_technique ?? undefined}
+                datasetId={datasetId}
+                dataSourceType={dataSourceType}
+                files={fileList.map((file) => file.file)}
+                notionPages={notionPages}
+                notionCredentialId={notionCredentialId}
+                websitePages={websitePages}
+                websiteCrawlProvider={websiteCrawlProvider}
+                websiteCrawlJobId={websiteCrawlJobId}
+                onStepChange={changeStep}
+                canCreateDocument={canAddDocumentsToDataset}
+                updateIndexingTypeCache={updateIndexingTypeCache}
+                updateRetrievalMethodCache={updateRetrievalMethodCache}
+                updateResultCache={updateResultCache}
+                crawlOptions={crawlOptions}
+              />
+            )}
+            {step === 3 && (
+              <StepThree
+                datasetId={datasetId}
+                datasetName={datasetDetail?.name}
+                indexingType={datasetDetail?.indexing_technique || indexingTypeCache}
+                retrievalMethod={
+                  datasetDetail?.retrieval_model_dict?.search_method ||
+                  retrievalMethodCache ||
+                  undefined
+                }
+                creationCache={result}
+              />
+            )}
+          </>
+        )}
       </div>
     </div>
   )

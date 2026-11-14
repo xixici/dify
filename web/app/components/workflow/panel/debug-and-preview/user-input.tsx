@@ -1,77 +1,49 @@
-import {
-  memo,
-  useState,
-} from 'react'
-import { useTranslation } from 'react-i18next'
+import type { StartNodeType } from '../../nodes/start/types'
+import { cn } from '@langgenius/dify-ui/cn'
+import { memo } from 'react'
 import { useNodes } from 'reactflow'
 import FormItem from '../../nodes/_base/components/before-run-form/form-item'
+import { useStore, useWorkflowStore } from '../../store'
 import { BlockEnum } from '../../types'
-import {
-  useStore,
-  useWorkflowStore,
-} from '../../store'
-import type { StartNodeType } from '../../nodes/start/types'
-import { ChevronDown } from '@/app/components/base/icons/src/vender/line/arrows'
 
 const UserInput = () => {
-  const { t } = useTranslation()
   const workflowStore = useWorkflowStore()
-  const [expanded, setExpanded] = useState(true)
-  const inputs = useStore(s => s.inputs)
+  const inputs = useStore((s) => s.inputs)
+  const showDebugAndPreviewPanel = useStore((s) => s.showDebugAndPreviewPanel)
   const nodes = useNodes<StartNodeType>()
-  const startNode = nodes.find(node => node.data.type === BlockEnum.Start)
+  const startNode = nodes.find((node) => node.data.type === BlockEnum.Start)
   const variables = startNode?.data.variables || []
+  const visibleVariables = showDebugAndPreviewPanel
+    ? variables
+    : variables.filter((v) => v.hide !== true)
 
   const handleValueChange = (variable: string, v: string) => {
-    workflowStore.getState().setInputs({
+    const { inputs, setInputs } = workflowStore.getState()
+    setInputs({
       ...inputs,
       [variable]: v,
     })
   }
 
-  if (!variables.length)
-    return null
+  if (!visibleVariables.length) return null
 
   return (
     <div
-      className={`
-        relative rounded-xl border z-[1]
-        ${!expanded ? 'bg-indigo-25 border-indigo-100 shadow-none' : 'bg-white shadow-xs border-transparent'}
-      `}
+      className={cn(
+        'relative z-1 rounded-xl border-[0.5px] border-components-panel-border-subtle bg-components-panel-on-panel-item-bg shadow-xs',
+      )}
     >
-      <div
-        className={`
-          flex items-center px-2 pt-4 h-[18px] text-[13px] font-semibold cursor-pointer
-          ${!expanded ? 'text-indigo-800' : 'text-gray-800'}
-        `}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <ChevronDown
-          className={`mr-1 w-3 h-3 ${!expanded ? '-rotate-90 text-indigo-600' : 'text-gray-300'}`}
-        />
-        {t('workflow.panel.userInputField').toLocaleUpperCase()}
-      </div>
-      <div className='px-2 pt-1 pb-3'>
-        {
-          expanded && (
-            <div className='py-2 text-[13px] text-gray-900'>
-              {
-                variables.map(variable => (
-                  <div
-                    key={variable.variable}
-                    className='mb-2 last-of-type:mb-0'
-                  >
-                    <FormItem
-                      payload={variable}
-                      value={inputs[variable.variable]}
-                      onChange={v => handleValueChange(variable.variable, v)}
-                    />
-                  </div>
-                ))
-              }
-            </div>
-          )
-        }
+      <div className="px-4 pt-3 pb-4">
+        {visibleVariables.map((variable, index) => (
+          <div key={variable.variable} className="mb-4 last-of-type:mb-0">
+            <FormItem
+              autoFocus={index === 0}
+              payload={variable}
+              value={inputs[variable.variable]}
+              onChange={(v) => handleValueChange(variable.variable, v)}
+            />
+          </div>
+        ))}
       </div>
     </div>
   )

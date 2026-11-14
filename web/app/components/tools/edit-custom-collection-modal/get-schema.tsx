@@ -1,116 +1,109 @@
 'use client'
 import type { FC } from 'react'
-import React, { useState } from 'react'
+import { Button } from '@langgenius/dify-ui/button'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@langgenius/dify-ui/input-group'
+import { Menu, MenuContent, MenuItem, MenuTrigger } from '@langgenius/dify-ui/menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@langgenius/dify-ui/popover'
+import * as React from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useClickAway } from 'ahooks'
-import Toast from '../../base/toast'
-import { Plus } from '../../base/icons/src/vender/line/general'
-import { ChevronDown } from '../../base/icons/src/vender/line/arrows'
-import examples from './examples'
-import Button from '@/app/components/base/button'
+import { toast } from '@/app/notifications'
 import { importSchemaFromURL } from '@/service/tools'
+import examples from './examples'
 
-type Props = {
+type Props = Readonly<{
   onChange: (value: string) => void
-}
+}>
 
-const GetSchema: FC<Props> = ({
-  onChange,
-}) => {
-  const { t } = useTranslation()
+const GetSchema: FC<Props> = ({ onChange }) => {
+  const { t } = useTranslation(['common', 'tools'])
   const [showImportFromUrl, setShowImportFromUrl] = useState(false)
   const [importUrl, setImportUrl] = useState('')
   const [isParsing, setIsParsing] = useState(false)
   const handleImportFromUrl = async () => {
+    if (isParsing) return
     if (!importUrl.startsWith('http://') && !importUrl.startsWith('https://')) {
-      Toast.notify({
-        type: 'error',
-        message: t('tools.createTool.urlError'),
-      })
+      toast.error(t(($) => $['createTool.urlError'], { ns: 'tools' }))
       return
     }
     setIsParsing(true)
     try {
-      const { schema } = await importSchemaFromURL(importUrl) as any
+      const { schema } = await importSchemaFromURL(importUrl)
       setImportUrl('')
       onChange(schema)
-    }
-    finally {
+    } finally {
       setIsParsing(false)
       setShowImportFromUrl(false)
     }
   }
 
-  const importURLRef = React.useRef(null)
-  useClickAway(() => {
-    setShowImportFromUrl(false)
-  }, importURLRef)
-
-  const [showExamples, setShowExamples] = useState(false)
-  const showExamplesRef = React.useRef(null)
-  useClickAway(() => {
-    setShowExamples(false)
-  }, showExamplesRef)
-
   return (
-    <div className='flex space-x-1 justify-end relative w-[224px]'>
-      <div ref={importURLRef}>
-        <Button
-          className='flex items-center !h-6 !px-2 space-x-1 '
-          onClick={() => { setShowImportFromUrl(!showImportFromUrl) }}
+    <div className="flex w-56 justify-end gap-1">
+      <Popover open={showImportFromUrl} onOpenChange={setShowImportFromUrl}>
+        <PopoverTrigger render={<Button size="small" />}>
+          <span className="i-ri-add-line size-3" aria-hidden />
+          <span className="system-xs-medium text-text-secondary">
+            {t(($) => $['createTool.importFromUrl'], { ns: 'tools' })}
+          </span>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          sideOffset={2}
+          className="w-75 p-2"
+          aria-label={t(($) => $['createTool.importFromUrl'], { ns: 'tools' })}
         >
-          <Plus className='w-3 h-3' />
-          <div className='text-xs font-medium text-gray-700'>{t('tools.createTool.importFromUrl')}</div>
-        </Button>
-        {showImportFromUrl && (
-          <div className=' absolute left-[-35px] top-[26px] p-2 rounded-lg border border-gray-200 bg-white shadow-lg'>
-            <div className='relative'>
-              <input
-                type='text'
-                className='w-[244px] h-8 pl-1.5 pr-[44px] overflow-x-auto border border-gray-200 rounded-lg text-[13px]'
-                placeholder={t('tools.createTool.importFromUrlPlaceHolder')!}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleImportFromUrl()
+            }}
+          >
+            <InputGroup>
+              <InputGroupInput
+                type="text"
+                name="schemaUrl"
+                inputMode="url"
+                aria-label={t(($) => $['createTool.importFromUrl'], { ns: 'tools' })}
+                placeholder={t(($) => $['createTool.importFromUrlPlaceHolder'], { ns: 'tools' })!}
                 value={importUrl}
-                onChange={e => setImportUrl(e.target.value)}
+                onValueChange={(value) => setImportUrl(value)}
               />
-              <Button
-                className='absolute top-1 right-1 !h-6 !px-2 text-xs font-medium'
-                type='primary'
-                disabled={!importUrl}
-                onClick={handleImportFromUrl}
-                loading={isParsing}
-              >
-                {isParsing ? '' : t('common.operation.ok')}
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-      <div className='relative' ref={showExamplesRef}>
-        <Button
-          className='flex items-center !h-6 !px-2 space-x-1'
-          onClick={() => { setShowExamples(!showExamples) }}
-        >
-          <div className='text-xs font-medium text-gray-700'>{t('tools.createTool.examples')}</div>
-          <ChevronDown className='w-3 h-3' />
-        </Button>
-        {showExamples && (
-          <div className='absolute top-7 right-0 p-1 rounded-lg bg-white shadow-sm'>
-            {examples.map(item => (
-              <div
-                key={item.key}
-                onClick={() => {
-                  onChange(item.content)
-                  setShowExamples(false)
-                }}
-                className='px-3 py-1.5 rounded-lg hover:bg-gray-50 leading-5 text-sm font-normal text-gray-700 cursor-pointer whitespace-nowrap'
-              >
-                {t(`tools.createTool.exampleOptions.${item.key}`)}
-              </div>
-            ))}
-          </div>
-        )}
-
-      </div>
+              <InputGroupAddon align="inline-end" className="pe-1">
+                <Button
+                  type="submit"
+                  size="small"
+                  variant="primary"
+                  disabled={!importUrl}
+                  loading={isParsing}
+                >
+                  {t(($) => $['operation.ok'], { ns: 'common' })}
+                </Button>
+              </InputGroupAddon>
+            </InputGroup>
+          </form>
+        </PopoverContent>
+      </Popover>
+      <Menu>
+        <MenuTrigger render={<Button size="small" />}>
+          <span className="system-xs-medium text-text-secondary">
+            {t(($) => $['createTool.examples'], { ns: 'tools' })}
+          </span>
+          <span className="i-ri-arrow-down-s-line size-3" aria-hidden />
+        </MenuTrigger>
+        <MenuContent align="end" sideOffset={2} className="min-w-max">
+          {examples.map((item) => (
+            <MenuItem
+              key={item.key}
+              onClick={() => {
+                onChange(item.content)
+              }}
+              className="system-sm-regular whitespace-nowrap text-text-secondary"
+            >
+              {t(($) => $[`createTool.exampleOptions.${item.key}`], { ns: 'tools' })}
+            </MenuItem>
+          ))}
+        </MenuContent>
+      </Menu>
     </div>
   )
 }

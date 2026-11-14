@@ -1,58 +1,65 @@
 'use client'
-import { useBoolean } from 'ahooks'
 import type { FC } from 'react'
-import React, { useState } from 'react'
+import { cn } from '@langgenius/dify-ui/cn'
+import { RiArrowDownSLine, RiArrowRightSLine } from '@remixicon/react'
+import { useBoolean } from 'ahooks'
+import * as React from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ChevronRight } from '@/app/components/base/icons/src/vender/line/arrows'
 import ImagePreview from '@/app/components/base/image-uploader/image-preview'
 
-type Props = {
+type Props = Readonly<{
   varList: { label: string; value: string }[]
   message_files: string[]
-}
+}>
 
-const VarPanel: FC<Props> = ({
-  varList,
-  message_files,
-}) => {
-  const { t } = useTranslation()
+const VarPanel: FC<Props> = ({ varList, message_files }) => {
+  const { t } = useTranslation(['appLog'])
   const [isCollapse, { toggle: toggleCollapse }] = useBoolean(false)
   const [imagePreviewUrl, setImagePreviewUrl] = useState('')
 
   return (
-    <div className='rounded-xl border border-color-indigo-100 bg-indigo-25'>
+    <div className="rounded-[10px] border border-divider-subtle bg-chat-bubble-bg">
       <div
-        className='flex items-center h-6 pl-2 py-6 space-x-1 cursor-pointer'
+        className={cn(
+          'flex cursor-pointer items-center gap-1 border-b border-divider-subtle px-3 pt-2.5 pb-2 text-text-secondary',
+          isCollapse && 'border-0 pb-2.5',
+        )}
         onClick={toggleCollapse}
       >
-        {
-          isCollapse
-            ? <ChevronRight className='w-3 h-3 text-gray-300' />
-            : <ChevronDown className='w-3 h-3 text-gray-300' />
-        }
-        <div className='text-sm font-semibold text-indigo-800 uppercase'>{t('appLog.detail.variables')}</div>
+        <span aria-hidden className="i-custom-vender-solid-development-variable-02 size-4" />
+        <div className="grow system-md-medium">
+          {t(($) => $['detail.variables'], { ns: 'appLog' })}
+        </div>
+        {isCollapse ? (
+          <RiArrowRightSLine className="size-4" />
+        ) : (
+          <RiArrowDownSLine className="size-4" />
+        )}
       </div>
       {!isCollapse && (
-        <div className='px-6 pb-3'>
+        <div className="flex max-h-125 flex-col gap-2 overflow-y-auto p-3">
           {varList.map(({ label, value }, index) => (
-            <div key={index} className='flex py-2 leading-[18px] text-[13px]'>
-              <div className='shrink-0 w-[128px] flex text-primary-600'>
-                <span className='shrink-0 opacity-60'>{'{{'}</span>
-                <span className='truncate'>{label}</span>
-                <span className='shrink-0 opacity-60'>{'}}'}</span>
+            <div key={index} className="flex py-2 system-xs-medium">
+              <div className="flex w-32 shrink-0 text-text-accent">
+                <span className="shrink-0 opacity-60">{'{{'}</span>
+                <span className="truncate">{label}</span>
+                <span className="shrink-0 opacity-60">{'}}'}</span>
               </div>
-              <div className='pl-2.5 break-all'>{value}</div>
+              <div className="pl-2.5 whitespace-pre-wrap text-text-secondary">{value}</div>
             </div>
           ))}
 
           {message_files.length > 0 && (
-            <div className='mt-1 flex py-2'>
-              <div className='shrink-0 w-[128px] leading-[18px] text-[13px] font-medium text-gray-700'>{t('appLog.detail.uploadImages')}</div>
+            <div className="mt-1 flex py-2">
+              <div className="w-32 shrink-0 system-xs-medium text-text-tertiary">
+                {t(($) => $['detail.uploadImages'], { ns: 'appLog' })}
+              </div>
               <div className="flex space-x-2">
                 {message_files.map((url, index) => (
                   <div
                     key={index}
-                    className="ml-2.5 w-16 h-16 rounded-lg bg-no-repeat bg-cover bg-center cursor-pointer"
+                    className="ml-2.5 size-16 cursor-pointer rounded-lg bg-cover bg-center bg-no-repeat"
                     style={{ backgroundImage: `url(${url})` }}
                     onClick={() => setImagePreviewUrl(url)}
                   />
@@ -62,14 +69,13 @@ const VarPanel: FC<Props> = ({
           )}
         </div>
       )}
-      {
-        imagePreviewUrl && (
-          <ImagePreview
-            url={imagePreviewUrl}
-            onCancel={() => setImagePreviewUrl('')}
-          />
-        )
-      }
+      {imagePreviewUrl && (
+        <ImagePreview
+          url={imagePreviewUrl}
+          title={imagePreviewUrl}
+          onCancel={() => setImagePreviewUrl('')}
+        />
+      )}
     </div>
   )
 }
